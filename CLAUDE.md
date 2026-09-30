@@ -78,8 +78,8 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
   publication-timing evidence gap, pre-existing and unrelated to today's work — detail below).** India block
   (delivery/F&O/flows/pledging/circuits). Sections marked 2026-09-30 below were checked against disk that day;
   sections still marked 2026-09-24 (delivery, F&O, breadth) were not re-ingested today but delivery and F&O were
-  re-verified, unchanged, by the same-day `scripts/verify_stage10_checkpoint.py` run (breadth has its own separate
-  verifier and was not re-run today).
+  re-verified, unchanged, by the same-day `scripts/verify_stage10.py` combined-checkpoint run (breadth has its own
+  separate verifier and was not re-run today).
   - **Delivery sub-block: complete and verified (2026-09-24).** `features/blocks/delivery.py` writes
     one Parquet per symbol to `data/processed/features/delivery/` (2,333 files, 6,923,017 rows,
     row-aligned 1:1 with Stage 4 price rows; 70.7% flagged missing = pre-2019 history).
@@ -140,15 +140,23 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
     NSE serves only the latest day, so it is forward capture only (`data/ingest_fii_dii.py`, timestamped); 1 populated row of
     7,919; 2026-09-22 and 09-23 were never captured and are lost; **no scheduled capture exists**, so every uncaptured day is lost.
     Independent rebuild, NSDL cross-checks and all 9 injected-bug checks pass; the block places a value on the next session
-    (safe, one session conservative). Publication timing: the monitor run meant to pin the true time (2026-09-24) got no
-    evidence because this machine was offline ~46 h; a LATER monitor attempt (`data/raw/_publication/first_seen.jsonl`,
-    last written 2026-09-26 20:00) got further — it ran, but died from a `ConnectionError` to `www.fpi.nsdl.co.in` (same
-    outage pattern) before ever seeing target date 2026-09-25's figure, leaving one negative record
-    (`first_seen_ist: null`). Since evidence now exists but proves nothing, the verifier's behaviour correctly changed from
-    reporting PENDING (no evidence at all) to FAILING (an unresolved target date) — this is the verifier doing its job, not
-    a regression. **Rerunning `python -m data.publication_monitor` for a fresh target date is the next step**; not done
-    today (out of scope for this session, and a publication monitor needs to run live across the event, not be launched
-    speculatively). Facts: `data/raw/DATA_NOTES.md` §12.
+    (safe, one session conservative). **Publication timing — known, dated gap, confirmed 2026-09-30, cannot be backfilled:**
+    `data/publication_monitor.py` is not a daemon (it polls every 3 min until every source is seen or a hard deadline
+    passes, then exits — meant to be invoked once per evening, per target date). Its `nsdl_cash` poll for target
+    2026-09-25 died from a `ConnectionError` to `www.fpi.nsdl.co.in` around 21:17 IST 2026-09-24 (same ~46h outage this
+    section already documented, not a new one) and never polled again, leaving one negative record
+    (`first_seen_ist: null` in `data/raw/_publication/first_seen.jsonl`). Confirmed today: nothing is running or
+    scheduled to run the monitor. This is NOT fixable by "restarting" it: the tool measures live, in real time, when a
+    source first shows a target day's data — running it now for 2026-09-25 would only prove the figure is visible as of
+    today, not that it was visible before the deadline that already passed. A valid fresh measurement needs a NEW target
+    date and a live run of up to ~24h; not attempted (out of scope this session). Until then the verifier correctly
+    FAILS this one check rather than pass an unproven timing claim — every other flows check still passes, and this is
+    the sole reason `scripts/verify_stage10.py` reports 4/5, not 5/5. **Separately:** the FII data itself is also only
+    current through 2026-09-24, but this is not a new or flows-specific stall — it is exactly in sync with the global
+    session calendar (`data/trading_calendar.py`), itself capped at 2026-09-24 because Stage 3 equity bhavcopy / Stage 4
+    prices have not been re-ingested since **2026-09-04** (only F&O bhavcopy, at 2026-09-24, carries the union calendar
+    that far); relative to the calendar it is actually built against, `fii_flows.parquet` is fully current. Facts:
+    `data/raw/DATA_NOTES.md` §12.
   - **Breadth sub-block: built and verified (2026-09-24).** `features/blocks/breadth.py` ->
     `data/processed/features/breadth/universe_breadth.parquet`: `universe_pct_above_200dma` = % of Stage 5 point-in-time universe
     members above their own 200-row SMA (NOT % of Nifty 500: no historical constituent lists exist, and the scorer's expected
@@ -192,21 +200,20 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
     0% disclosures in the raw filings, 822,645 feature rows at exactly 0%, both survive unflagged); truncation; and 5
     injected-bug checks (creation/period-date keying, zero-fill, stale carry-forward, a value off by 5pp, a cleared flag) that
     all genuinely fire. Facts: DATA_NOTES §14 (still not written).
-  - **Stage 10 is NOT complete.** `python -m scripts.verify_stage10_checkpoint` runs the five sub-blocks this checkpoint
-    covers (delivery, F&O, flows, pledging, circuits) — **4 of 5 PASS (2026-09-30): delivery, F&O, pledging, circuits.
-    flows FAILS**, on the FII publication-timing check specifically (every other flows check, including all 9 injected-bug
-    checks, passes). Cause, confirmed on disk: `data/publication_monitor.py`'s `nsdl_cash` evidence file
-    (`data/raw/_publication/first_seen.jsonl`, last written 2026-09-26 20:00) holds exactly one record, for target date
-    2026-09-25, with `first_seen_ist: null` and a `ConnectionError` to `www.fpi.nsdl.co.in` — the monitor died mid-run from
-    the machine's known network-outage pattern before ever confirming whether that day's figure was on time, so the
-    verifier correctly refuses to pass an unproven timing claim. This is a pre-existing gap, untouched by today's work
-    (nothing in flows.py, its verifier, or the monitor was changed): **rerunning `python -m data.publication_monitor` for a
-    fresh target date is needed to get real evidence** before this can pass; not attempted today (out of scope, and a
-    monitor needs to run live across a publication event, not something to launch speculatively). Breadth has its own
-    separate verifier, already passing (2026-09-24). What else remains before Stage 10 as a whole is done: **the F&O
-    feature block does not exist yet** (`features/blocks/` still has no F&O module — only raw ingestion is built), and DII
-    flows remain forward-capture only (one populated row). DATA_NOTES §13/§14 (circuits/pledging source facts) are still not
-    written. The repo is now under git (first commit 2026-09-30).
+  - **Stage 10 is NOT complete.** `python -m scripts.verify_stage10` runs the five sub-blocks this checkpoint covers
+    (delivery, F&O, flows, pledging, circuits) — **4 of 5 PASS (confirmed fresh 2026-09-30): delivery (45s), F&O (86s),
+    pledging (137s), circuits (111s). flows FAILS (8s)**, on the FII publication-timing check only (every other flows
+    check, all 9 injected-bug tests included, passes) — see the flows sub-block bullet above for the full, dated
+    diagnosis: the evidence is a known, un-backfillable gap (`data/publication_monitor.py` died mid-run for target
+    2026-09-25 and nothing restarts it), confirmed today to be pre-existing and untouched by this session's work
+    (nothing in `flows.py`, its verifier, or the monitor was edited). This is reported honestly as 4/5, not silently
+    rounded up to 5/5. Breadth has its own separate verifier, already passing (2026-09-24). What else remains before
+    Stage 10 as a whole is done: **the F&O feature block does not exist yet** (`features/blocks/` still has no F&O
+    module — only raw ingestion is built); **Stage 3 equity bhavcopy / Stage 4 prices have not been re-ingested since
+    2026-09-04**, capping every Stage 10 sub-block's current data at that date (F&O bhavcopy alone reaches 2026-09-24);
+    DII flows remain forward-capture only (one populated row); a fresh, valid publication-timing measurement is still
+    needed. DATA_NOTES §13/§14 (circuits/pledging source facts) are still not written. The repo is now under git (first
+    commit 2026-09-30).
 - **Stages 11–26: not started.**
 
 ## Data storage — where things actually live
@@ -278,7 +285,8 @@ features/blocks/
 scripts/
   verify_stage9_checkpoint.py, verify_stage10_delivery.py, verify_stage10_fno.py, verify_stage10_flows.py,
   verify_stage10_breadth.py, verify_stage10_pledging.py, verify_stage10_circuits.py   # checkpoint verifiers, run against real data
-  verify_stage10_checkpoint.py   # combined Stage 10 checkpoint: runs the five verifiers above (excl. breadth) and summarizes
+  verify_stage10.py              # combined Stage 10 checkpoint: runs the five verifiers above (excl. breadth) and summarizes
+                                  # (Stage 11's precondition check)
   measure_band_inference.py      # circuit_inference accuracy measurement -> data/raw/sec_list/_inference_measurement.csv
 tests/
   test_indicators.py, test_scorer.py, test_delivery_features.py, test_fno_ingest.py, test_fno_ban.py, test_ingest_common.py

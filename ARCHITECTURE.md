@@ -87,10 +87,10 @@ GO/NO-GO gate (**GATE VERDICT = GO**, ~4.60% net annualized spread)
 
 **Phase 2 — Features** [Stages 8–9 done, Stage 10 in progress, 11–12 not started]
 8. Index+macro pipeline — 9. Technical indicators + deterministic scorer
-[DONE] — **10. India block (delivery/F&O/flows/pledging/circuits) (in progress: delivery,
-pledging and circuits feature blocks complete and verified; F&O raw ingest done, no
-feature block yet; flows built, FII publication-timing evidence pending — detail in
-CLAUDE.md)**
+[DONE] — **10. India block (delivery/F&O/flows/pledging/circuits) (in progress: combined
+checkpoint `scripts/verify_stage10.py` 4/5 PASS — delivery, F&O, pledging, circuits;
+flows FAILS on a documented, un-backfillable publication-timing gap, not a code defect
+— detail in CLAUDE.md)**
 — 11. Override gates+circuit/ban filters — 12. PIT feature store
 
 **Phase 3 — Harness and baselines** [not started]

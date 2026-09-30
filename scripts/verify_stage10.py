@@ -9,7 +9,7 @@ answers it for Stage 9; every sub-block remains independently runnable as `pytho
 Breadth (features/blocks/breadth.py) has its own verifier, scripts/verify_stage10_breadth.py, already run and passing
 (2026-09-24); it is not re-run here because it is not one of the five sub-blocks this checkpoint was asked to cover.
 
-Usage: python -m scripts.verify_stage10_checkpoint
+Usage: python -m scripts.verify_stage10
 """
 
 from __future__ import annotations
