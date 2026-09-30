@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:in-bse-shp="http://www.bseindia.com/xbrl/shp/2025-10-31/in-bse-shp" xmlns:in-bse-shp-types="http://www.bseindia.com/xbrl/shp/2025-10-31/in-bse-shp-types" xmlns:iso4217="http://www.xbrl.org/2003/iso4217" xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:negated="http://www.xbrl.org/2009/role/negated" xmlns:net="http://www.xbrl.org/2009/role/net" xmlns:nonnum="http://www.xbrl.org/dtr/type/non-numeric" xmlns:num="http://www.xbrl.org/dtr/type/numeric" xmlns:xbrldi="http://xbrl.org/2006/xbrldi" xmlns:xbrldt="http://xbrl.org/2005/xbrldt" xmlns:xl="http://www.xbrl.org/2003/XLink" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<link:schemaRef xlink:href="in-bse-shp-2025-10-31.xsd" xlink:type="simple"/>
+<xbrli:context id="MainI"><xbrli:entity><xbrli:identifier scheme="http://www.bseindia.com/in-bse-shp/ScripCode">532754</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="ShareholdingOfPromoterAndPromoterGroup_ContextI"><xbrli:entity><xbrli:identifier scheme="http://www.bseindia.com/in-bse-shp/ScripCode">532754</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period><xbrli:scenario><xbrldi:explicitMember dimension="in-bse-shp:CategoryOfShareholdersAxis">in-bse-shp:ShareholdingOfPromoterAndPromoterGroupMember</xbrldi:explicitMember></xbrli:scenario></xbrli:context>
+<in-bse-shp:WhetherCompanyIsSME contextRef="MainI">******</in-bse-shp:WhetherCompanyIsSME>
+<in-bse-shp:DateOfReport contextRef="MainI">2026-06-30</in-bse-shp:DateOfReport>
+<in-bse-shp:WhetherTheListedEntityIsPublicSectorUndertaking contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityIsPublicSectorUndertaking>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpShares contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpShares>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyPartlyPaidUpSharesForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecurities contextRef="MainI">true</in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecurities>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForPromoterAndPromoterGroup contextRef="MainI">true</in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyConvertibleSecuritiesForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrants contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrants>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasIssuedAnyWarrantsForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstanding contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstanding>
+<in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasGrantedAnyESOPWhichAreOutstandingForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssued contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssued>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesAgainstWhichDepositoryReceiptsAreIssuedForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedIn contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedIn>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForPublicShareholder>
+<in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherTheListedEntityHasAnySharesInLockedInForNonPromoterNonPublic>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderPledged contextRef="MainI">true</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderPledged>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderPledgedForPromoterAndPromoterGroup contextRef="MainI">true</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderPledgedForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderNonDisposalUndertaking contextRef="MainI">false</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderNonDisposalUndertaking>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderNonDisposalUndertakingForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedUnderNonDisposalUndertakingForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedOtherThanByWayOfPledgeOrNDU contextRef="MainI">false</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedOtherThanByWayOfPledgeOrNDU>
+<in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedOtherThanByWayOfPledgeOrNDUForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherAnySharesHeldByPromotersAreEncumberedOtherThanByWayOfPledgeOrNDUForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRights contextRef="MainI">false</in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRights>
+<in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForPromoterAndPromoterGroup contextRef="MainI">false</in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForPromoterAndPromoterGroup>
+<in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForPublicShareholder contextRef="MainI">false</in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForPublicShareholder>
+<in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForNonPromoterNonPublic contextRef="MainI">false</in-bse-shp:WhetherCompanyHasEquitySharesWithDifferentialVotingRightsForNonPromoterNonPublic>
+<in-bse-shp:WhetherTheListedEntityHasAnySignificantBeneficialOwner contextRef="MainI">true</in-bse-shp:WhetherTheListedEntityHasAnySignificantBeneficialOwner>
+<in-bse-shp:NumberOfShareholders contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">26</in-bse-shp:NumberOfShareholders>
+<in-bse-shp:NumberOfFullyPaidUpEquityShares contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">7091579906</in-bse-shp:NumberOfFullyPaidUpEquityShares>
+<in-bse-shp:NumberOfShares contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">7091579906</in-bse-shp:NumberOfShares>
+<in-bse-shp:ShareholdingAsAPercentageOfTotalNumberOfShares contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">0.6716</in-bse-shp:ShareholdingAsAPercentageOfTotalNumberOfShares>
+<in-bse-shp:NumberOfVotingRightsHeldBySameClassOfSecurities contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">7091579906</in-bse-shp:NumberOfVotingRightsHeldBySameClassOfSecurities>
+<in-bse-shp:NumberOfVotingRights contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">7091579906</in-bse-shp:NumberOfVotingRights>
+<in-bse-shp:PercentageOfTotalVotingRights contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">0.6716</in-bse-shp:PercentageOfTotalVotingRights>
+<in-bse-shp:NumberOfSharesUnderlyingOutstandingConvertibleSecurities contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">3412033331</in-bse-shp:NumberOfSharesUnderlyingOutstandingConvertibleSecurities>
+<in-bse-shp:NumberOfSharesUnderlyingOutstandingConvertibleSecuritiesWarrantsAndESOP contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">3412033331</in-bse-shp:NumberOfSharesUnderlyingOutstandingConvertibleSecuritiesWarrantsAndESOP>
+<in-bse-shp:NumberOfSharesOnFullyDilutedBasisIncludingWarrantsESOPAndConvertibleSecurities contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">10503613237</in-bse-shp:NumberOfSharesOnFullyDilutedBasisIncludingWarrantsESOPAndConvertibleSecurities>
+<in-bse-shp:ShareholdingAsAPercentageAssumingFullConversionOfConvertibleSecuritiesWarrantsAndESOP contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">0.7518</in-bse-shp:ShareholdingAsAPercentageAssumingFullConversionOfConvertibleSecuritiesWarrantsAndESOP>
+<in-bse-shp:NumberOfSharesEncumberedUnderPledged contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">1166000000</in-bse-shp:NumberOfSharesEncumberedUnderPledged>
+<in-bse-shp:EncumberedShareUnderPledgedAsPercentageOfTotalNumberOfShares contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">0.1644</in-bse-shp:EncumberedShareUnderPledgedAsPercentageOfTotalNumberOfShares>
+<in-bse-shp:NumberOfSharesEncumbered contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">1166000000</in-bse-shp:NumberOfSharesEncumbered>
+<in-bse-shp:EncumberedSharesHeldAsPercentageOfTotalNumberOfShares contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="pure">0.1644</in-bse-shp:EncumberedSharesHeldAsPercentageOfTotalNumberOfShares>
+<in-bse-shp:NumberOfEquitySharesHeldInDematerializedForm contextRef="ShareholdingOfPromoterAndPromoterGroup_ContextI" decimals="INF" unitRef="shares">7091579906</in-bse-shp:NumberOfEquitySharesHeldInDematerializedForm>
+<in-bse-shp:DisclosureOfNotesOnShareholdingPatternExplanatoryTextBlock contextRef="MainI">1. The principal amount of FCCBs held by ADP may be converted into approx. 58,95,16,758 fully paid-up equity shares of the Company having face value of Re. 1 each and principal amount of FCCBs held by GVL may be converted into approx. 8,10,84,222 fully paid-up equity shares of the Company having face value of Re. 1 each in accordance with the terms of the Bonds.
+
+Further, as per the terms of the FCCB, the accrued interest on the FCCB will also be capitalised and added to the principal amount at the time on conversion and accordingly upto FY 2025-26, the accrued interest is convertible into 136991470 equity shares of Re. 1 each.
+
+
+2. During the quarter ended June 30, 2026, following entities were incorporated and based on their shareholding structure, have been categorised under the Promoter Group in accordance with Regulation 2(1)(pp) of SEBI (Issue of Capital and Disclosure Requirements) Regulations, 2018:
+
+1) Yehuda Investment Holdings Limited 
+2) GVL Enterprise Pte Ltd 
+3) Socit d'Investissement d'ADP 5 (SIA5)
+4) Socit d'Investissement d'ADP 6 (SIA6)
+5) Socit d'Investissement d'ADP 7 (SIA7)
+6) Socit d'Investissement d'ADP 8 (SIA8)
+
+3. Number of Shares pledged or otherwise encumbered mentioned in Table I and Table II are only for Promoter &amp; Promoter Group. 
+
+4.Details mentioned in Table III does not include the shares held by Directors belonging to Promoter and Promoter Group as it has already been disclosed in Table II of Share holding pattern. 
+
+5. The Company has a Corporate Shareholder holding more than 10% shares of the Company i.e GMR Enterprises Private Limited (GEPL) and GMR Infra Enterprises Private Limited (GIEPL), a wholly owned subidiary of GEPL. The Shareholders of GMR Enterprises Private Limited comprises of Discretionary Trusts with no identified beneficial owners. As such in terms of Companies Act, 2013, all the trustees of such discretionary trusts have been considered as Significant Beneficial Owner. Further the details regarding individual direct shareholding may be referred to in this shareholding pattern of the Company.
+
+6. The Company continues to be fully compliant with the minimum public shareholding(MPS) requirement. While, on a fully diluted basis the public shareholding is marginally below threshold prescribed under the SEBI Regulations, since, the threshold needs to calculated on a issued basis, the MPS is compliant with said regulations. 
+
+</in-bse-shp:DisclosureOfNotesOnShareholdingPatternExplanatoryTextBlock>
+<in-bse-shp:PercentageOfBoardApprovedLimits contextRef="MainI" decimals="INF" unitRef="pure">1</in-bse-shp:PercentageOfBoardApprovedLimits>
+<in-bse-shp:PercentageOfLimitsUtilized contextRef="MainI" decimals="INF" unitRef="pure">0.5767</in-bse-shp:PercentageOfLimitsUtilized>
+</xbrli:xbrl>

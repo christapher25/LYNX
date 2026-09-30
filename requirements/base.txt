@@ -1,0 +1,13 @@
+pandas
+numpy
+pyarrow
+psycopg2-binary
+python-dotenv
+requests
+# Imported by code the CI invariant suite (tests/invariants/) exercises. Missing from this file until 2026-09-24, which
+# made `pytest tests/invariants/` fail at collection in a clean environment (verified: 2 collection errors).
+loguru
+tenacity
+tqdm
+hmmlearn
+pytest

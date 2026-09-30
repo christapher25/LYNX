@@ -1,0 +1,64 @@
+version: "3.9"
+
+# Local development services matching the tech stack established in the
+# architecture doc: PostgreSQL for the PIT feature store, Redis for
+# caching, Neo4j for the knowledge graph (Stage 19+). Not used yet by
+# anything built so far — Stages 1-8 have all run on local Parquet files
+# — but needed starting around Stage 12 (PIT feature store) and later
+# the knowledge graph stages.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lynx_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lynx}
+      POSTGRES_USER: ${POSTGRES_USER:-lynx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lynx_dev_only}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"   # override in .env if the host's 5432 is taken
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lynx}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: lynx_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: lynx_neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-lynx_dev_only}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt protocol
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  neo4j_data:

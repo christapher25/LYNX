@@ -1,0 +1,359 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+</html>
+<head id="Head1"><title>
+
+</title>
+    <script type="text/javascript">
+
+        function PrintData() {
+
+            var prtGrid = document.getElementById('rpt');
+
+            prtGrid.border = 1;
+
+            var prtwin = window.open('', 'PrintGridViewData', 'left=100,top=100,width=1000,height=1000,tollbar=0,scrollbars=1,status=0,resizable=1');
+
+            prtwin.document.write(prtGrid.outerHTML);
+
+            prtwin.document.close();
+
+            prtwin.focus();
+
+            prtwin.print();
+
+            prtwin.close();
+
+        }
+
+    </script>
+    <script type="text/javascript">
+        function ExportDIVtoExcel() {
+            var html = '';
+            html += $("#rpt").html();
+            html = $.trim(html);
+
+            //vinay 12042022
+
+            html = html.replace('Currency:', '');
+            //  alert(html);
+            //  html = html.replace('<select id="ddlCurr" style="height: 23px; width: 62px;"><option value="INR" selected="">INR</option><option value="USD">USD</option></select>', '');
+            // html = html.replace('<select id="ddlCurr" style=" height: 23px; width: 62px;"><option value="INR" selected="">INR</option><option value="USD">USD</option></select>', '');
+            //  html = html.replace('<select id="ddlCurr" style="width: 62px; height: 23px;"><option value="INR" selected="">INR</option><option value="USD">USD</option></select>', '');
+            // alert(html);
+
+            var pattern1 = '<select id=\"ddlCurr\".+?</select>';
+            var r2 = html.match(pattern1);
+            html = html.replace(r2, '');
+
+            // alert(html);
+
+            //end
+
+            html = html.replace(/>/g, '&gt;');
+            html = html.replace(/</g, '&lt;');
+
+
+
+            $("input[id$='HdnValexceldata']").val(html);
+        }
+    </script>
+    
+    <script src="https://www.fpi.nsdl.co.in/web/Scripts/jquery.js?20180306" type="text/javascript"></script>    
+
+ 
+
+
+    
+</head>
+<body>
+    <link href="https://www.fpi.nsdl.co.in/web/Css/nsdl.css?ref=20180306" rel="stylesheet" />
+
+    <form method="post" action="./QuarterlyWise.aspx" id="frmLatest">
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="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" />
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['frmLatest'];
+if (!theForm) {
+    theForm = document.frmLatest;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<div class="aspNetHidden">
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="E4F8C174" />
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="Hi8easFF5pytaTgij8u4mShTS4DBqUEj8ck5XdF8bEhvuuSQi6mrYHLe/n5dZ+lSLruCm6hSfie5jHnbCpTh298USLX0CdwrrnAN3rTwCqY8eoaAuVX8Oc/zhkL9OjlDt4z0zbBaRNRCUbLtR974X2c8i5C799kLALGuQfLyreKU4ESzvwSwkvIY/TyQx5KAWc2uUCJO0Js71svr1pzYxm+LbGQ6T0zeu0yaLX0+dzDsToRVYX/AdT4r8yECOm0kzzL6O9Ur2DtCZn8qm8A05g==" />
+</div>
+        <div class="mainWrapper">
+            
+
+    <script type="text/javascript" src="https://www.fpi.nsdl.co.in/web/Scripts/dw_event.js"></script>
+    <script type="text/javascript" src="https://www.fpi.nsdl.co.in/web/Scripts/font.js"></script>
+
+<script type="text/javascript" language="javascript">
+    //function DisableBackButton() {
+    //    window.history.forward()
+    //}
+    //DisableBackButton();
+    //window.onload = DisableBackButton;
+    //window.onpageshow = function (evt) { if (evt.persisted) DisableBackButton() }
+    //window.onunload = function () { void (0) }
+ </script>
+
+
+
+<script type="text/javascript">
+    //window.history.pushState(null, null, window.location.href);
+    //window.onpopstate = function () {
+    //    window.history.go(1);
+    //};
+    window.history.forward();
+    window.onload = function () {
+        window.history.forward();
+    };
+
+    window.onunload = function () {
+        null;
+    };
+    </script>
+
+
+<script type="text/javascript">
+
+
+    /**
+      * Disable right-click of mouse, F12 key, and save key combinations on page
+      * By Arthur Gareginyan (arthurgareginyan[at]gmail[dot]com)
+      * For full source code, visit https://mycyberuniverse.com
+      */
+    window.onload = function () {
+        document.addEventListener("contextmenu", function (e) {
+            e.preventDefault();
+        }, false);
+        document.addEventListener("keydown", function (e) {
+            //document.onkeydown = function(e) {
+            // "I" key
+            if (e.ctrlKey && e.shiftKey && e.keyCode == 73) {
+                disabledEvent(e);
+            }
+            // "J" key
+            if (e.ctrlKey && e.shiftKey && e.keyCode == 74) {
+                disabledEvent(e);
+            }
+            // "S" key + macOS
+            if (e.keyCode == 83 && (navigator.platform.match("Mac") ? e.metaKey : e.ctrlKey)) {
+                disabledEvent(e);
+            }
+            // "U" key
+            if (e.ctrlKey && e.keyCode == 85) {
+                disabledEvent(e);
+            }
+            // "F12" key
+            if (event.keyCode == 123) {
+                disabledEvent(e);
+            }
+        }, false);
+        function disabledEvent(e) {
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            } else if (window.event) {
+                window.event.cancelBubble = true;
+            }
+            e.preventDefault();
+            return false;
+        }
+    };
+</script>
+
+<div class="main_header position_R">
+			<div class="fL" style="background:#f5ecc4;height:100px;width:165px;">
+				<a href="https://www.fpi.nsdl.co.in/web/Default.aspx" ><img  class="mL5 mT25" src="https://www.fpi.nsdl.co.in/web/Images/nsdl_logo.png" alt="NSDL logo" height="52" width="152" /></a>
+			</div>
+			<div id="HeaderControl_fpilogo" class="fL mL20 mT50" style="display:;">
+				<a href="https://www.fpi.nsdl.co.in/web/Default.aspx"><img src="https://www.fpi.nsdl.co.in/web/Images/subhead_new.png" alt="NSDL Logo"  /></a>
+			</div>
+    		<div id="HeaderControl_tradelogo" class="fL mL20 mT50" style="display:none;">
+				<a href="https://www.fpi.nsdl.co.in/web/Default.aspx"><img src="https://www.fpi.nsdl.co.in/web/Images/subhead_new1.png" alt="NSDL Logo"  /></a>
+			</div>
+    
+			<div class="fR mT45 w350">
+				<div id="HeaderControl_dvHlinks" class="fL mR5 tabs01 mT5">
+					
+                    <div id="HeaderControl_headmenu">
+						<div class="tabslist"><a class="tabslist" href="https://www.fpi.nsdl.co.in/web/Reports/ReportsListing.aspx">FPI Investments</a></div>
+						<div class="pp1" style="color:floralwhite">|</div>
+                        <div class="tabslist"><a class="tabslist" title="Foreign Investment Limit Monitoring(FILM)" href="https://www.fpi.nsdl.co.in/web/Reports/ForeignInvestmentLimitMonitoringListing.aspx">Foreign Investment Limit Monitoring</a> </div>
+						<div class="pp1" style="color:floralwhite">|</div>
+						<div class="tabslist"> <a class="tabslist" href="https://www.fpi.nsdl.co.in/web/HomePage/FrmHomePage.aspx">Common Application Form</a></div>
+                        <div style="clear:both;"></div>
+					</div>
+                   
+				 </div>
+				
+				<div id="HeaderControl_dvLogin" class="fL mR5"><a id="HeaderControl_btnLogin" href="javascript:__doPostBack(&#39;HeaderControl$btnLogin&#39;,&#39;&#39;)"><img src="https://www.fpi.nsdl.co.in/web/Images/login.png" height="38" width="63" alt="Login" /></a></div>
+                
+				<div class="clr"></div>
+                <div class="position_A clr fontAdjust" id="sizer">
+					<div class="display_B mT4 s11 b clrYellow fL">Font Size :</div>
+					<a title="Decrease text size" href="#" class="decrease mT5 display_B fL"><img alt="" src="https://www.fpi.nsdl.co.in/web/Images/Sm_A.png"></a>
+					<a title="Restore default font-sizes" href="#" class="reset mT4 display_B fL"><img alt="" src="https://www.fpi.nsdl.co.in/web/Images/Md_A.png"></a>
+					<a title="Increase text size" href="#" class="increase mT4 display_B fL"><img alt="" src="https://www.fpi.nsdl.co.in/web/Images/Bg_A.png"></a>
+				</div>
+			</div>
+			<div class="clr"></div>
+		</div>
+
+<script type="text/javascript">
+    //Prevents backspace except in the case of textareas and text inputs to prevent user navigation.
+    $(document).keydown(function (e) {
+        var preventKeyPress;
+        if (e.keyCode == 8) {
+            var d = e.srcElement || e.target;
+            switch (d.tagName.toUpperCase()) {
+                case 'TEXTAREA':
+                    preventKeyPress = d.readOnly || d.disabled;
+                    break;
+                case 'INPUT':
+                    preventKeyPress = d.readOnly || d.disabled ||
+                        (d.attributes["type"] && $.inArray(d.attributes["type"].value.toLowerCase(), ["radio", "checkbox", "submit", "button"]) >= 0);
+                    break;
+                case 'DIV':
+                    preventKeyPress = d.readOnly || d.disabled || !(d.attributes["contentEditable"] && d.attributes["contentEditable"].value == "true");
+                    break;
+                default:
+                    preventKeyPress = true;
+                    break;
+            }
+        }
+        else
+            preventKeyPress = false;
+
+        if (preventKeyPress)
+            e.preventDefault();
+    });
+</script> 
+
+            <div id="mainContent" class="main_content">
+                
+
+<div style="padding-bottom:10px;border-bottom:1px solid #edeeee;"><!-- Breadcrumbs -->
+    <div class="fL">
+	    <div id="BrdControl_dvBreadcrumbs" class="tabs03"><ul><li><a href='https://www.fpi.nsdl.co.in/web/Default.aspx'>Home</a></li><li><a href='https://www.fpi.nsdl.co.in/web/Reports/ReportsListing.aspx'>FPI Investments</a></li><li><span class='last s12'>View Report</span></li></ul></div>
+    </div>
+    <div class="clr"></div>
+</div>
+
+                
+                <table id='tblhdrddl' border='0' width="100%" >
+                <tr>
+                <td width="83%" nowrap="">
+                <div id="dvHdr" class="heading01 mT10">Quarterly FPI Net Investments (Calendar Year)</div>
+                
+                </td>
+
+                <td align="right">
+                <div id="dvDDL" style="float: right;">
+                    <label id="lbl1" style="margin-left: 10px;"><b>Year:</b></label>
+                    
+                    <select name="ddl" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;ddl\&#39;,\&#39;\&#39;)&#39;, 0)" id="ddl" class="select02" style="float: none;">
+	<option value="2024">2024</option>
+	<option value="2025">2025</option>
+	<option selected="selected" value="2026">2026</option>
+
+</select>
+                 
+                </div>
+                </td>
+                
+                </tr>
+                </table>
+                
+                 
+                <input type="submit" name="Button1" value="Export To Excel" onclick="ExportDIVtoExcel();" id="Button1" class="gry_center01 btn_Text" style="padding-top:0px;margin-top:18px;float:right;" /> 
+                <div id="Div1" class="" style="background: url(&#39;../Images/top_arrow.png&#39;) no-repeat 30px 1px; padding-top: 6px; height: 5px;">
+                    <!--height:8px; -->
+                    <div style="border-bottom: 3px solid #4d4d4d; padding-bottom: 2px;"></div>
+                </div>
+                
+                
+                
+                
+
+                <div id="rpt" class="mT10" style="float:right;width:100%;"><table cellspacing='0' cellpadding='0' width='100%' class='tbls01'><tr><th style='border-right-style: none;'>&nbsp;</th><th align='center' colspan='11' style='text-align:center;font-size:10pt;color:blue;border-right: 0px; '>Quarterly FPI Net Investments (Calendar Year)</th><th align='center' colspan='1' style='text-align:right; font-size:10pt;'><label id='lbl1' runat='server' style='margin-left: 10px;'>Currency: </label><select id='ddlCurr' style=' height: 23px; width: 62px;'><option value='INR' selected>INR</option><option value='USD' >USD</option></select></th></tr><tr><th align='center' rowspan='3' style='font-size:10pt'>Quarter</th><th align='center' colspan='12' style='text-align:center;font-size:10pt'>INR Crores</th></tr><tr><th align='center' style='text-align:center;font-size:10pt'>Equity</th><th align='center' colspan='3' style='text-align:center;font-size:10pt'>Debt</th><th align='center' style='text-align:center;font-size:10pt'>Hybrid</th><th align='center' colspan='5' style='text-align:center;font-size:10pt'>Mutual Funds</th><th align='center' style='text-align:center;font-size:10pt;word-wrap:break-word;width:200px;'>Alternative Investment Funds(AIFs)</th><th align='center' rowspan='2' style='text-align:center;font-size:10pt'>Total</th></tr><tr><th align='center' style='text-align:center;font-size:10pt'>Equity</th><th align='center' style='text-align:center;font-size:10pt'>Debt-General Limit</th><th align='center' style='text-align:center;font-size:10pt'>Debt-VRR</th><th align='center' style='text-align:center;font-size:10pt'>Debt-FAR</th><th align='center' style='text-align:center;font-size:10pt'>Hybrid</th><th align='center' style='text-align:center;font-size:10pt'>Equity</th><th align='center' style='text-align:center;font-size:10pt'>Debt</th><th align='center' style='text-align:center;font-size:10pt'>Hybrid</th><th align='center' style='text-align:center;font-size:10pt'>Solution Oriented</th><th align='center' style='text-align:center;font-size:10pt'>Other</th><th align='center' style='text-align:center;font-size:10pt'>AIF</th></tr><tr><td style='text-align:center;'>Quarter 1(Jan-Mar)</td><td style='text-align:right;'>-131109</td><td style='text-align:right;'>4372</td><td style='text-align:right;'>1601</td><td style='text-align:right;'>10351</td><td style='text-align:right;'>-1789</td><td style='text-align:right;'>433</td><td style='text-align:right;'>-277</td><td style='text-align:right;'>-297</td><td style='text-align:right;'>0</td><td style='text-align:right;'>-466</td><td style='text-align:right;'>-4</td><td style='text-align:right;'>-117172</td><tr><td style='text-align:center;'>Quarter 2(Apr-Jun)</td><td style='text-align:right;'>-143142</td><td style='text-align:right;'>22846</td><td style='text-align:right;'>-1313</td><td style='text-align:right;'>25900</td><td style='text-align:right;'>73</td><td style='text-align:right;'>216</td><td style='text-align:right;'>-113</td><td style='text-align:right;'>2</td><td style='text-align:right;'>0</td><td style='text-align:right;'>-196</td><td style='text-align:right;'>5</td><td style='text-align:right;'>-95700</td><tr><td style='text-align:center;'>Quarter 3(July-Sep) **</td><td style='text-align:right;'>37221</td><td style='text-align:right;'>24873</td><td style='text-align:right;'>-15080</td><td style='text-align:right;'>-2648</td><td style='text-align:right;'>-4771</td><td style='text-align:right;'>237</td><td style='text-align:right;'>43</td><td style='text-align:right;'>23</td><td style='text-align:right;'>0</td><td style='text-align:right;'>718</td><td style='text-align:right;'>3</td><td style='text-align:right;'>40611</td><tr style='background: #fbf6d5;'><td style='text-align:center; background: #fbf6d5;'>Total - 2026</td><td style='text-align:right;'>-237030</td><td style='text-align:right;'>52091</td><td style='text-align:right;'>-14792</td><td style='text-align:right;'>33603</td><td style='text-align:right;'>-6487</td><td style='text-align:right;'>886</td><td style='text-align:right;'>-347</td><td style='text-align:right;'>-272</td><td style='text-align:right;'>0</td><td style='text-align:right;'>56</td><td style='text-align:right;'>4</td><td style='text-align:right;'>-172261</td></tr><tr><td colspan='13' style='text-align:left'><br /><br />** up to 24 Sep 2026</td></tr><tr><td colspan='13' style=''><br /><br />Notes :<br/>-The data presented above is compiled on the basis of reports submitted to Depositories by Custodians and constitutes trades conducted by FPIs on and up to the previous trading day(s).<br/>- The quarterly net investment of FPIs in Debt-FAR, Mutual Funds and AIF segment have been included in the aforesaid report w.e.f. September 2024.</td></tr><br/><br/></tr></div>
+                
+                <input type="button" id="btnPrint" value="Print" onclick="PrintData()" style="background-color: #0099FF; border: solid;display:none;" />
+                 
+                <input type="hidden" name="HdnValexceldata" id="HdnValexceldata" />                
+                <input type="hidden" name="hdnCurr" id="hdnCurr" />                                      
+            </div>
+
+
+
+            
+
+                   </div>
+    </form>
+    <script language="javascript" type ="text/javascript">
+        // $(document).ready(function(){
+        //     debugger;
+        // $("ddlCurr").change(function(){
+
+        //     var selCurr = $(this).children("option:selected").val();
+
+        //     alert("Currency - " + selCurr);
+
+        // });
+        //});
+
+        $("#ddlCurr").change(function (e) {
+
+            //alert("currency" + $("#ddlCurr").val());
+            //debugger;
+            document.getElementById("hdnCurr").value = $("#ddlCurr").val();
+            //window.Location= "Yearwise.aspx?RptType=6" ;
+            __doPostBack();
+            // var jsonData = JSON.stringify({ aData: aData });
+            //$.ajax({
+            //    type: "POST",
+            //    //getListOfCars is my webmethod   
+            //    url: "Yearwise.aspx?RptType=6&year=2011&CurrVal=" + $("#ddlCurr").val() + "",
+            //    data: jsonData,
+            //    contentType: "application/json; charset=utf-8",
+            //    dataType: "json", // dataType is json format
+            //    success: OnSuccess,
+            //    error: OnErrorCall
+            //});
+
+            //function OnSuccess(response) {
+            //    alert("Currency");
+            //    console.log(response.d)
+            //}
+            //function OnErrorCall(response) { console.log(error); }
+        });
+
+
+
+        </script>
+
+
+
+</body>

@@ -1,0 +1,1104 @@
+FINAL-YEAR CAPSTONE · ARCHITECTURE PLAN V4 · CANONICAL
+
+ LYNX Technical Architecture Plan
+
+ Multi-horizon equity signal intelligence for NSE, with web and mobile delivery
+
+This document supersedes v3 and consolidates it with the v4 addendum. It specifies PRISM — a
+Pretrained Relational Index-neutral Signal Model — together with the nine-layer system that surrounds
+it, the mobile delivery architecture added following the Phase I interim presentation, and the extended
+invariant-test methodology that now covers every risky stage of the pipeline, not only the first eight.
+
+The central change from v2 is a shift in where model capacity comes from. Rather than scaling a
+supervised model against a small labelled dataset, PRISM acquires its representation through
+self-supervised pretraining across two markets, then fine-tunes a small task head on the Indian ranking
+problem. Around that core sit an agentic extraction layer that writes verifiable facts to a knowledge
+graph, a conformal calibration stage that lets the system abstain, and quantile heads that convert a
+ranking into entry, target, and stop-loss levels across three trading horizons. Delivery now spans a web
+client and a React Native mobile client published to both the App Store and the Play Store.
+
+ DOCUMENT: Technical Architecture Plan v4.0 — canonical
+ SUPERSEDES: v3.0 (July 2026) and the standalone v4 addendum (September 2026); GRAIL Technical Design v1.0; Architecture Transfer Doc v2.0
+ PROGRAMME: B.Tech Computer Science & Engineering (AI & ML)
+ INSTITUTION: St. Thomas College of Engineering and Technology
+: APJ Abdul Kalam Technological University, Kerala
+ PREDECESSOR: SignalForge — US equity signal system, production v1
+ TRIGGER FOR V4: Supervisor requirement, Phase I interim presentation: LYNX must ship as an installable application on the App Store and the Play Store, not web-only
+ DATE: September 2026
+
+## Contents
+
+- **What Changed in v3** — the five substantive upgrades, and what each one replaces
+- **The Compute Question** — what unlimited training time does and does not buy
+- **PRISM — The Algorithm** — six innovations
+- **Data Layer** — bhavcopy backbone, GDELT historical news, announcement feeds, broker intraday
+- **Language Layer** — replacing FinBERT with structured event extraction
+- **System Architecture — Nine Layers**
+- **Training Protocol** — four stages, walk-forward discipline
+- **Evaluation** — metrics, the Indian cost model, the ablation suite
+- **Technology Stack** — consolidated inventory, including mobile delivery
+- **Build Order** — twenty-six stages, dependency-ordered
+- **Invariants and Risk** — extended through Step 14, with the corrected descope order
+- **Mobile Delivery Architecture** — *new in v4* — store submission, offline behaviour, update strategy
+- **Extended Invariant-Test Methodology** — *new in v4* — eight new tests, Steps 9 through 14
+- **Build Sequencing and Session Discipline**
+
+> **WHAT'S NEW IN V4, IN ONE PLACE**
+>
+> Two sections are wholly new: Section 12 (Mobile Delivery Architecture) and Section 13 (Extended
+> Invariant-Test Methodology). Two existing sections are corrected: Section 9's technology stack now
+> details the mobile stack instead of naming it in one line, and Section 11.4's descope order no longer
+> lists the mobile app as the first thing to cut, since it is now a supervisor-mandated deliverable.
+> Everything else — PRISM's six components, the sixteen-step pipeline, the nine system layers, the
+> training protocol, and the evaluation suite — carries forward from v3 unchanged.
+
+## What Changed in v3
+
+Version 2 inherited SignalForge's decision layer intact — a deterministic score combined with an
+XGBoost binary classifier, thresholded into BUY/SELL/HOLD. That core is sound engineering and it works
+in production. It is also the part that must change if LYNX is to be a distinct system rather than a
+port with additions.
+
+### The five upgrades
+
+| # | CHANGE | REPLACES | WHY IT MATTERS |
+|—|—|—|—|
+| 1 | Cross-market self-supervised pretraining *(headline)* | Training the encoder from scratch on Indian data alone | The labelled Indian ranking task has roughly 5,000 effective samples. Unlabelled price sequences across two markets number in the millions. Pretraining converts the second into representation capacity for the first — and it is the one thing that genuinely rewards days of GPU time. |
+| 2 | Multi-horizon multi-task heads | A single 3-day binary label | One trunk, four supervision signals per sample (1d, 5d, 20d, 60d). Roughly quadruples label efficiency at fixed data — and the product needs three horizons anyway. |
+| 3 | Listwise ranking objective | P(rise > 2% in 3d) classification with threshold rules | The product consumes an ordering of ten names. A classifier optimises probability calibration for stocks nobody sees, and its base rate swings with the market — so it learns timing, not selection. |
+| 4 | Conformal abstention + quantile levels | Fixed thresholds (composite > 65 AND prob ≥ 0.72) | Threshold rules emit a call every day regardless of conditions. Conformal calibration lets LYNX publish nothing when its confidence bound does not clear transaction costs — and quantile heads supply the entry, target, and stop-loss the product requires. |
+| 5 | Agentic extraction into a knowledge graph *(from v2 §6)* | Per-ticker sentiment scalar | Retained from the transfer document and strengthened with a verifiability rule (§5.4). Captures supplier-to-OEM and promoter-group propagation that flat features cannot express. |
+
+### What v2 got right and v3 keeps unchanged
+
+The transfer document's operational content is better than its algorithmic content, and almost all of
+it survives verbatim:
+
+- **The six lessons (v2 §5).** Date-type mismatch in validation, sparse sentiment joins,
+verification scripts querying the wrong table, scope drift across long sessions, rate limiting, one
+canonical database path. Every one of these will recur in LYNX if not explicitly guarded. These are
+carried into §11 unchanged.
+- **The India-specific issues (v2 §9).** Circuit limits, F&O ban periods, the liquidity cliff
+below the top 200, corporate action frequency, promoter pledging. All correct, all retained as hard gates.
+- **The override gates.** News gate, volatility gate, drawdown gate, event-proximity gate. These
+run before scoring and remain unchanged — they are cheap, auditable, and catch failure modes no
+learned model reliably catches.
+- **The core invariant.** The LLM never emits a decision. Retained and strengthened.
+- **The deterministic scorer.** Retained — but cross-sectionally normalised (§6.3) and
+demoted from decision-maker to feature provider and auditable fallback.
+- **The discipline.** "A validated 62% is a far better capstone result than an unverified
+73%." That sentence governs this document too.
+
+### Two corrections to earlier guidance
+
+> **CORRECTION 1 — YFINANCE CANNOT BE THE PRICE BACKBONE**
+>
+> The transfer document proposes yfinance with a .NS suffix as the primary OHLCV source. This silently
+> removes delivery percentage, which exists only in NSE bhavcopy and is LYNX's single strongest
+> India-specific feature. yfinance's corporate-action adjustment for Indian tickers is also unreliable,
+> which collides directly with the transfer document's own warning about bonus issues. Bhavcopy is the
+> backbone; yfinance is a convenience layer and cross-check only.
+
+> **CORRECTION 2 — THE EMBARGO WAS TOO SHORT**
+>
+> A 2-day embargo against a 3-day forward label leaks: the final training observations carry labels that
+> extend into the test window. Embargo must be at least the label horizon — 5 days for the swing label,
+> 60 for the long-term label. It is a per-horizon configuration parameter, never a constant.
+
+## The Compute Question
+
+Training time is no longer a constraint — runs may take hours or days. This section is about spending
+that honestly, because the naive response makes the system worse rather than better.
+
+### The constraint that compute does not lift
+
+The Indian dataset appears to hold roughly 3.5 million rows: 700 stocks over twenty years. That count is
+misleading. On any given trading day, all 700 stocks share one market factor, one foreign-flow factor,
+a currency factor, and a volatility state. The cross-section is not 700 independent observations of a
+relationship — it is closer to one observation of that relationship, measured 700 times with
+correlated noise.
+
+"`
+independent unit = the DAY, not the stock-day
+ 250 days/yr × 20 yr ≈ 5,000 effective samples
+"`
+
+This is a property of the data, not of the hardware. A larger supervised model trained for a week on
+5,000 effective samples fits them perfectly and generalises no better than one trained for an hour.
+Longer runs do not fix it. More layers do not fix it. Architecture search actively worsens it, because a
+model free to redesign itself against 5,000 samples will find noise and call it structure.
+
+### The four techniques that do convert compute into accuracy
+
+Compute helps precisely where it buys more information rather than more parameters. Four techniques
+qualify, and all four are adopted:
+
+| TECHNIQUE | WHY IT WORKS AT 5,000 SAMPLES | COMPUTE APPETITE |
+|—|—|—|
+| Self-supervised pretraining | Learns representation from unlabelled sequences, of which there are millions. The labelled task then needs far less data to reach the same representation quality. | Very high — days. This is where the long runs go. |
+| Cross-market transfer | Adds a second market's history to the pretraining corpus. Microstructure differs, but momentum, mean-reversion, and volatility clustering are shared. | High — folded into pretraining |
+| Multi-task learning | Four horizons predicted jointly means four supervision signals per sample instead of one. The shared trunk is regularised by having to serve all four. | Moderate |
+| Ensembling and proper HPO | Seed variance at this sample size is large. Ten seeds instead of one turns a noisy point estimate into a distribution. Nested search prevents tuning on the test fold. | High — embarrassingly parallel |
+
+> **THE RULE THAT FOLLOWS**
+>
+> Spend compute on the pretraining corpus and on ensembling. Keep the supervised head small. The
+> pretrained encoder may be large because it learns from millions of unlabelled sequences. The task head
+> that maps it to a ranking sees only 5,000 effective samples and stays correspondingly small. This split
+> is the single most defensible design decision in the document, and it is what makes "we trained for
+> three days" a real claim rather than a boast.
+
+### Where SignalForge becomes an asset
+
+SignalForge already has a 20-year US equity dataset — roughly 800 tickers, cleaned, adjusted,
+survivorship-corrected. As a supervised corpus it is unusable for LYNX: different market, different
+microstructure, different regulatory regime.
+
+As an unlabelled pretraining corpus it is directly usable. The pretraining objective is masked
+reconstruction of price sequences — it never sees a label, so market-specific label semantics never
+enter. What transfers is the shape of financial time series: volatility clustering, mean reversion,
+volume-price coupling, gap behaviour.
+
+> **THE NARRATIVE THIS CREATES**
+>
+> SignalForge's dataset becomes LYNX's pretraining corpus. The first project is not repeated by the
+> second — it is consumed by it. That is a genuine engineering arc, and it is a stronger answer to "how
+> do these two projects differ" than any list of frameworks.
+
+## PRISM — The Algorithm
+
+Pretrained Relational Index-neutral Signal Model. Six components, of which the first is the one that
+makes the rest affordable.
+
+### Problem formulation
+
+For each trading day t and each horizon h in intraday, 5d, 20d, 60d, given the investable
+universe U(t), produce a ranking over U(t) by expected sector-neutral forward return, together with
+a calibrated interval and trade levels for whichever names survive the abstention filter.
+
+"`
+r(i,t,h) = adjusted forward return over horizon h
+
+r~(i,t,h) = r(i,t,h) - mean of r over sector(i) on day t
+
+y(i,t,h) = cross-sectional rank of r~, scaled to [0,1]
+"`
+
+Two decisions are embedded in those lines. Rank rather than raw return, because Indian smallcaps have
+severe fat tails and a squared-error loss on raw returns lets one +40% observation dominate the
+gradient — the model learns to chase lottery tickets. Sector-demeaned, because without it the model
+spends its capacity predicting the market factor, and the resulting "alpha" carries a beta near one.
+
+### The six components
+
+| # | COMPONENT | WHAT IT DOES | STATUS |
+|—|—|—|—|
+| 1 | Cross-market SSL pretraining | Masked patch reconstruction over US + India price sequences. Produces a general financial time-series encoder. | NEW |
+| 2 | Multi-horizon task heads | One shared trunk, four ranking heads. Each sample supervises all four. | NEW |
+| 3 | Heterogeneous temporal graph | Six edge types including promoter group and KG-derived supply chain. Edge weights vary with market state. | EXTENDED |
+| 4 | Regime-specialised heads | Shared trunk, separate output heads per HMM regime state. Hard-routed, not learned gating. | NEW |
+| 5 | Conformal abstention | Mondrian-binned split conformal. Publishes only when the lower bound clears round-trip cost. | FROM V1 |
+| 6 | Quantile trade levels | Pinball-loss heads at tau = 0.1/0.5/0.9 produce entry, target, and stop-loss. | NEW |
+
+### Component 1 — cross-market self-supervised pretraining
+
+The encoder is trained before it ever sees a ranking label, on a task that requires no labels at all.
+
+> **OBJECTIVE: MASKED PATCH RECONSTRUCTION**
+>
+> A price sequence is divided into patches of 5 trading days. A random 40% of patches are masked. The
+> encoder must reconstruct the masked patches from surrounding context. This is the time-series analogue
+> of masked language modelling, and it forces the encoder to learn volatility clustering, mean reversion,
+> and volume-price coupling — because those are what make reconstruction possible.
+>
+"`
+L_ssl = MSE( reconstructed_patches , true_patches ) over masked positions only
+"`
+
+| SOURCE | SCALE | CONTRIBUTION |
+|—|—|—|
+| India — NSE bhavcopy | ~1,500 tickers × 20 yr | Target market. Includes names outside the final investable universe — for pretraining, illiquid names are still valid sequences. |
+| US — SignalForge dataset | ~800 tickers × 20 yr | Transfer corpus. Different microstructure, shared time-series physics. |
+| Indices, both markets | ~40 series × 20 yr | Macro context sequences |
+
+Total: roughly 2,300 tickers × 5,000 days, windowed into overlapping 250-day sequences with
+stride 5, yielding on the order of one million training sequences — three orders of magnitude more
+than the 5,000 effective supervised samples. This is the number that justifies a larger encoder and a
+multi-day run.
+
+**Encoder.** Patch-based transformer, 6 layers, d_model 256, 8 heads — approximately 5 million
+parameters. Note the inversion from earlier designs: this is large by the standards of the supervised
+task and entirely appropriate for a corpus of a million sequences.
+
+> **PRETRAINING LEAKAGE — THE FAILURE MODE UNIQUE TO THIS DESIGN**
+>
+> The pretraining corpus must be split by time, not by ticker. If the encoder is pretrained on sequences
+> running to 2026 and then fine-tuned on a walk-forward fold testing 2015, the encoder has seen the future
+> of that fold. Every fold's evaluation would be silently invalid, and nothing would error.
+> The requirement: for a fold testing year Y, both pretraining and fine-tuning use data ending before
+> Y minus the embargo. In practice this means pretraining once per fold — expensive, which is exactly
+> what the compute budget is for. Cutting this corner is the single most damaging shortcut available in
+> this architecture.
+
+### Component 2 — multi-horizon task heads
+
+The pretrained trunk is shared. Four ranking heads sit on top, one per horizon, each a small MLP
+producing a score for its own label.
+
+"`
+L_task = Σ over h of w(h) × LambdaLoss( scores(·,h) , y(·,h) )
+
+w = intraday 0.2, 5d 0.4, 20d 0.2, 60d 0.2
+"`
+
+Two benefits at this sample size. Each training day supplies four supervision signals rather than one,
+roughly quadrupling label efficiency. And the shared trunk is regularised by having to serve four
+horizons simultaneously — a representation that only works for 5-day returns cannot satisfy the 60-day
+head, so overfitting to one horizon is penalised by the others.
+
+The intraday head trains on a different input stream (5-minute bars) and is fine-tuned separately after
+the daily heads converge; the trunk is shared but frozen during that stage.
+
+> **LOSS DETAIL**
+>
+> LambdaLoss with NDCG weighting, trained at @50 and evaluated at @10. A pure @10 objective supplies
+> gradient from ten of seven hundred stocks across ~250 training days per fold — too sparse to
+> learn from. Training at @50 preserves the top-weighted shape while supplying five times the signal.
+
+### Component 3 — heterogeneous temporal graph
+
+Stocks are nodes. Six edge types, rebuilt monthly from trailing data only.
+
+| EDGE | SOURCE | CONTRIBUTION |
+|—|—|—|
+| same_sector | NIC / GICS | Baseline economic linkage |
+| same_promoter_group | NSE/BSE promoter disclosures — ~35 groups, ~150 entities | The India-specific edge. Tata, Reliance, Adani, Birla, Bajaj, JSW, Vedanta. Group members reprice together on group-level news; the January 2023 Adani episode moved ten tickers on one report. No US analogue. |
+| supply_chain | KG-derived — agent extraction from related-party disclosures and news | Propagates supplier results to OEMs. This edge is populated by the agent layer (§6.4), which is what makes the agents contribute measurably rather than decoratively. |
+| corr_knn | Top-8 by 120d return correlation, excluding same-sector | Co-movement the taxonomy misses |
+| index_comembership | Nifty family membership | Pure flow effect from ETF and index-fund rebalancing |
+| co_mention | KG-derived — GDELT co-occurrence in the same article | Emergent, event-driven association not present in any static taxonomy |
+
+Model: relational graph attention (R-GAT), two layers. Two only — with 700 nodes and dense sector
+edges, two-hop propagation already reaches most of the graph, and a third layer oversmooths node
+representations toward a single global average, which is to say it rediscovers the market factor §3.1
+removed.
+
+Attention rather than fixed weights, because the correct weight on a promoter-group edge is
+state-dependent: group members track each other tightly during group-level events and loosely
+otherwise. This is also the answer to the obvious challenge — "why not add a promoter-group dummy to
+the gradient boosting model?" A dummy encodes membership; attention encodes propagation, whose strength
+varies.
+
+### Component 4 — regime-specialised heads
+
+A 3-state Gaussian HMM over India VIX, FII net flow, Nifty 500 breadth, and USDINR change produces a
+regime state. Rather than concatenating a regime embedding, PRISM routes to regime-specific output heads
+over a shared trunk.
+
+> **WHY SHARED TRUNK, SEPARATE HEADS — AND NOT A FULL MIXTURE OF EXPERTS**
+>
+> A three-expert MoE with learned gating would give each expert roughly 1,700 effective samples. That is
+> too thin, and learned gating adds a second thing to overfit. Sharing the trunk means all data trains the
+> representation; only the final head — a few thousand parameters — specialises. Routing is hard, by
+> HMM state, not learned. This captures the genuine benefit (a risk-off regime rewards different features
+> than a risk-on one) without the overfitting exposure.
+
+> **THE BUG THAT INVALIDATES REGIME-SWITCHING RESULTS**
+>
+> Fit the HMM on training data only, and at inference use the forward algorithm — the filtered state
+> probability. Never Viterbi. Viterbi decoding conditions on the entire observation sequence including the
+> future. A backtest built on Viterbi-smoothed regime labels looks spectacular and does not survive live
+> deployment by a week.
+
+### Component 5 — conformal abstention
+
+Split conformal over a rolling 250-day calibration window immediately preceding test. For names the
+ranker places in the top-10, conformity scores are collected from realised net returns; the empirical
+quantile at alpha = 0.1 gives a lower bound.
+
+"`
+publish stock i ⟺ conformal_lower_bound(i) > round_trip_cost(i)
+"`
+
+Mondrian-binned by regime, because interval width in a high-VIX outflow regime differs substantially
+from a calm one — a pooled quantile is simultaneously too narrow in the volatile regime and too wide
+in the calm one.
+
+The product consequence is that some days publish four names, and some days zero. That is the intended
+behaviour. The model knows when it does not know is a stronger and more defensible claim than any
+accuracy figure, and unlike an accuracy figure it can be verified with a coverage plot.
+
+> **STATING THE ASSUMPTION HONESTLY**
+>
+> Conformal coverage guarantees assume exchangeability, which financial time series violate. The correct
+> posture is to treat coverage as an empirical claim measured per fold, not a theorem cited in the
+> introduction. §8 specifies the plot that constitutes the evidence. An examiner who knows conformal
+> prediction will ask about exchangeability — answering before being asked is worth more than the
+> component itself.
+
+### Component 6 — quantile heads for trade levels
+
+A ranking score cannot produce a price level. LambdaLoss optimises ordering; it says nothing about
+magnitude, and target and stop-loss are magnitude questions. A second head is therefore required.
+
+"`
+shared trunk (pretrained encoder → R-GAT → fusion)
+
+ -> ranking head → LambdaLoss → decides WHAT publishes
+
+ -> quantile head → pinball loss → decides WHERE levels sit
+
+ tau = 0.1, 0.5, 0.9
+"`
+
+The quantile head is roughly 10k parameters and runs only on names surviving the conformal filter.
+Ranking retains the decision; the quantile head only sizes the trade.
+
+> **LEVEL RULE**
+>
+> **Entry** — Intraday: 09:25 VWAP. Swing/long-term: next-day open. Never the signal-generation
+> price — that price is not obtainable by any user.
+> **Stop-loss** — min( entry × (1 + q_10) , entry - 1.5 × ATR ) — the tighter
+> of the two. The ATR floor is the sanity check: quantile estimates on financial returns are noisy, and a
+> bad q_10 gives a stop 8% away that protects nothing.
+> **Target** — entry × (1 + q_50), floored at 1.5R. Use the median, not q_90 — a
+> level reached one time in ten is decorative.
+
+> **WHAT STOP-LOSSES DO TO THE EVALUATION**
+>
+> Rank IC measures return at the end of the horizon. A stop-loss is path-dependent: a 5-day trade ending
+> +3% that dipped -2% on day two gets stopped out. Realised performance and rank IC therefore diverge,
+> and rank IC alone stops being a sufficient report. §8 adds hit rate, realised R, stop-out rate, and
+> expected value per signal.
+> This also yields a genuinely interesting ablation: does the stop-loss improve or degrade net expected
+> value versus holding to horizon? The answer is not obvious. The prior worth testing is that stops help
+> intraday, where adverse moves persist, and hurt swing, where mean reversion within the horizon is common.
+
+## Data Layer
+
+### Price and market data
+
+| NEED | SOURCE | NOTE |
+|—|—|—|
+| Daily OHLCV + delivery % | NSE bhavcopy (scraped) | The backbone. Delivery percentage exists nowhere else and is the strongest India-specific feature. Free, deep. |
+| F&O data | NSE F&O bhavcopy | Open interest, rollover, ban list |
+| Impact cost | NSE published figures | Drives both the liquidity screen and the cost model |
+| Intraday bars | Kite Connect / Dhan / SmartAPI | 5-minute bars, not 1-minute. At 1-min, 700 tickers over 5 years is ~330M rows; at 5-min with a 200-name F&O universe it is a few tens of millions — manageable in Postgres. |
+| Pre-open auction | NSE pre-open session data | The 09:00--09:08 call auction gives opening price and gap before the intraday signal publishes at 09:20 |
+| Indices | ^NSEI, ^NSEBANK, ^INDIAVIX, ^BSESN | Display and regime features |
+| Flows | NSDL / NSE | FII/DII daily net — a first-order driver of Indian index direction |
+| Macro | RBI DBIE, MOSPI | Repo rate, CPI, IIP, USDINR |
+| Historical constituents | NSE index-change announcements | Manual assembly. Tedious, and the single thing most likely to separate this from other capstones. |
+| US pretraining corpus | SignalForge dataset | Already cleaned and adjusted. Unlabelled use only. |
+
+### News — GDELT as the historical backbone
+
+The transfer document proposed NewsAPI plus RSS. That combination cannot support this project, for a
+specific reason: RSS feeds have no history. They deliver what is published now. A walk-forward
+evaluation over twenty years needs news from 2010, and no RSS feed provides it. NewsAPI's free tier is
+capped at 100 requests per day with historical access limited to roughly one month, and its paid tiers
+start around 449/month.
+
+> **GDELT SOLVES THE HISTORICAL NEWS PROBLEM**
+>
+> GDELT is a free, open dataset monitoring news from every country, covering 100+ countries and dozens of
+> languages, with historical data reaching back decades and 15-minute update cycles. It includes tone,
+> themes, entity, and geolocation annotations, and its Global Knowledge Graph connects entities and
+> events. Access is via BigQuery for bulk historical extraction and via the DOC 2.0 API for recent queries.
+> Two caveats worth knowing. GDELT is built for global event monitoring rather than finance, so entity
+> resolution to NSE tickers must be built rather than assumed. And the newer GDELT Cloud product has
+> sparse coverage before March 2026 — use the core GDELT 2.0 GKG tables via BigQuery for historical
+> work, not GDELT Cloud.
+
+| SOURCE | COST | HISTORY | ROLE IN LYNX |
+|—|—|—|—|
+| GDELT 2.0 GKG (BigQuery) | Free | Deep | Historical backbone. Enables news features across the full walk-forward, plus the co_mention graph edge. |
+| NSE / BSE announcements | Free | Deep | Highest signal-to-noise source available. Official, structured, timestamped, ticker-tagged by construction — no entity resolution needed. Results, orders, ratings, promoter actions. |
+| RSS — ET, Moneycontrol, Mint, Business Standard | Free | None | Live layer only. Begins accumulating history from day one of the build. |
+| NewsAPI | Free | ~1 month | Optional live supplement. Not load-bearing. |
+
+> **CORPORATE ANNOUNCEMENTS DESERVE MORE WEIGHT THAN NEWS**
+>
+> NSE announcements are already ticker-tagged, timestamped, and categorised. They require no entity
+> resolution, carry no editorial noise, and are the actual events that news articles report on — usually
+> hours later. For a system whose features must be point-in-time correct, an announcement feed is
+> strictly better than a news feed. Build the announcement pipeline before the news pipeline.
+
+### The fundamentals corpus
+
+The transfer document identifies this correctly as the hardest data problem: SEC EDGAR gives structured
+machine-readable filings, and NSE gives PDFs with inconsistent formats. Its three proposed approaches
+stand, with a revision to the recommended path.
+
+| APPROACH | EFFORT | VERDICT |
+|—|—|—|
+| Synthetic events from quarterly results | Low | Ship v1 with this |
+| LLM extraction over announcement text | Medium | Revised recommendation. The agent layer (§5) already runs an instruction-tuned LLM over announcements. Extending it to pull structured financial fields from results announcements gives most of the PDF pipeline's value at a fraction of the cost — and the extraction is verifiable against the source text. |
+| Full annual report PDF pipeline | High | v2 upgrade if time permits |
+
+## Language Layer
+
+FinBERT is replaced — but for a narrower and better-evidenced reason than previously argued, and the
+replacement changes what the layer produces, not just which model produces it.
+
+### Why FinBERT goes
+
+An earlier version of this argument claimed FinBERT fails on Hindi-language sources. That was largely
+irrelevant: the actual corpus — Economic Times, Moneycontrol, Mint, Business Standard, NSE
+announcements — is overwhelmingly English. The claim was wrong and is withdrawn.
+
+The real case is different and stronger. Recent work fine-tuning lightweight LLMs for financial
+sentiment finds that LLMs can surpass FinBERT while using only a minimal proportion of training data, or
+none at all, with Qwen3 8B and Llama3 8B performing best across most scenarios in both zero-shot and
+few-shot settings. Separately, FinGPT's v3 series — general LLMs LoRA-fine-tuned on news and sentiment
+data — reports the best scores on most financial sentiment datasets at low cost, trainable on a single
+consumer GPU.
+
+Two further considerations specific to LYNX:
+
+- **Domain concepts, not language.** FinBERT was trained on US financial text. Promoter
+pledging, upper circuit, F&O ban, PSU/NBFC classification, and QIP do not appear in its training
+distribution. It handles them as unfamiliar tokens rather than as concepts.
+- **Scalar sentiment is a lossy output.** A single number in [-1, +1] discards the event type,
+the affected entity, the direction, the magnitude, and the horizon — all of which LYNX needs for its
+knowledge graph.
+
+### What replaces it — structured event extraction
+
+An instruction-tuned open LLM (Qwen3 8B or Llama3 8B, LoRA-fine-tuned) emits a structured record per
+article or announcement rather than a scalar:
+
+> **RECORD SCHEMA**
+>
+>
+> entity: "TATAMOTORS" // resolved to NSE symbol
+> event_type: "order_win" // enum, ~18 categories
+> polarity: +1 // -1 | 0 | +1
+> magnitude: "material" // minor | material | transformative
+> horizon: "medium" // immediate | short | medium | long
+> confidence: 0.82
+> source_span: "..." // verbatim text supporting the extraction
+> related: ["TATAPOWER"] // co-mentioned entities → graph edge
+
+Event type enum: results_beat, results_miss, guidance_up, guidance_down, order_win,
+capex_announcement, rating_upgrade, rating_downgrade, regulatory_action, promoter_buy,
+promoter_sell, pledge_increase, pledge_release, mna, litigation, management_change, qip_fundraise,
+other.
+
+Each field becomes a feature. \textttrelated populates the co_mention graph edge.
+\textttsource_span is what makes the extraction verifiable — see §5.4.
+
+### Hardware routing
+
+The local GPU is 4 GB, which cannot fine-tune an 8B model. The work splits:
+
+| STAGE | WHERE | NOTE |
+|—|—|—|
+| SSL pretraining (§3.3) | Cloud GPU — Kaggle T4 (16 GB, free tier) or Colab | The multi-day runs. Checkpoint aggressively; free tiers have session limits. |
+| LLM LoRA fine-tune | Cloud GPU | QLoRA on an 8B model needs ~8--12 GB |
+| LLM batch inference | Cloud, or API | Nightly over new articles only. Historical backfill is a one-time bulk job. |
+| PRISM supervised fine-tune | Local 4 GB | ~500k parameter task head. Fits comfortably. |
+| Nightly inference | Local 4 GB | 700 stocks, one forward pass |
+
+> **CARRIED FROM THE TRANSFER DOCUMENT**
+>
+> NLP inference and model training must never be co-resident on the 4 GB card. Run extraction as a nightly
+> stage that completes before training begins. Sequential, always.
+
+### The rule that keeps the agent layer honest
+
+The transfer document's §6 states that agents enrich features but do not vote. That is weaker than it
+sounds — a feature entering the model does affect the decision. The rule that makes the design actually
+safe:
+
+> **EXTRACTIVE, NOT GENERATIVE**
+>
+> Facts written to the knowledge graph must be extractive and verifiable, not generative judgments.
+> ✓ "Company A supplies Company B" — extracted from a related-party disclosure, with a
+> source_span, checkable against the original document.
+> × "Sector sentiment is deteriorating" — an LLM opinion with no ground truth and no way to
+> audit it.
+> Extraction can be validated: hand-label 500 articles, measure precision and recall per event type, and
+> report it. Judgment cannot be validated, and a hallucinated judgment entering the feature matrix is
+> exactly the failure mode the LLM-never-decides invariant exists to prevent. This rule is what lets the
+> agent layer contribute measurably rather than decoratively — and it is a reportable result in its own
+> right.
+
+## System Architecture — Nine Layers
+
+Layers 1, 3, and 4 are new relative to SignalForge. Layer 5 is the only component that emits a
+decision; everything above it supplies features and everything below it narrates or delivers.
+
+### Layer responsibilities
+
+| L | LAYER | CADENCE | RESPONSIBILITY |
+|—|—|—|—|
+| 0 | Data | Nightly + bulk | Ingest, validate, adjust for corporate actions, enforce point-in-time correctness |
+| 1 | SSL pretraining | Per fold, offline | Masked patch reconstruction over the two-market corpus. Produces the encoder checkpoint. |
+| 2 | Features + scorer | Nightly | Price, delivery, F&O, macro blocks. Deterministic scorer retained as feature and fallback. Override gates applied. |
+| 3 | Agent extraction | Nightly | LangGraph orchestration over announcements and news. Structured, extractive records only. |
+| 4 | Knowledge graph | Nightly write, monthly graph rebuild | Entity-event store. Emits relational features and two graph edge types. |
+| 5 | PRISM core | Nightly | The only decision-maker. Four horizon rankings plus quantile levels. |
+| 6 | Conformal | Nightly | Calibration, cost-aware abstention, final publish set |
+| 7 | Explanation | Nightly, published names only | LLM narration grounded in SHAP attribution and retrieved evidence |
+| 8 | Delivery | Continuous | API, clients, tiering, immutable prediction log — web and mobile; see §12 for the mobile delivery architecture |
+| 9 | Self-improvement | Weekly | Outcome recording, scheduled retrain, conformal recalibration, feature drift monitoring |
+
+> **THE DECISION PATH, END TO END**
+>
+> L0 Data (bhavcopy + delivery% · F&O · flows · macro · GDELT · NSE
+> announcements · SignalForge US corpus) → L1 SSL pretraining (offline, masked patches, US +
+> India) → L2 Features + deterministic scorer (cross-sectionally z-scored, gates applied) → L3
+> Agent extraction — LangGraph (structured events, extractive only) → L4 Knowledge graph (relational
+> features + graph edges) → L5 PRISM ranking core (pretrained encoder → R-GAT → regime heads
+> → 4 horizon rankers + quantile head — the only component that emits a decision) → L6 Conformal
+> calibration + abstention (Mondrian by regime, publishes 0 to 10, entry/target/stop-loss attached) →
+> L7 Explanation (LLM narrates decisions already made, grounded in SHAP + retrieved evidence) → L8
+> Delivery (FastAPI, web + mobile, tiered, immutable prediction log) → L9 Self-improvement loop
+> (outcome recorder, scheduled retrain, recalibration).
+> L1 runs offline per fold. L2--L8 run nightly. L9 runs weekly.
+
+### The daily cycle
+
+> **SCHEDULE**
+>
+>
+> 18:00 bhavcopy, F&O, delivery, ban list land
+> 18:30 ingest + validate (assert row counts vs expected universe)
+> 18:45 corporate action adjustment ≤ftarrow runs before any feature computation
+> 19:00 feature blocks → point-in-time store
+> 19:15 agent extraction over new announcements + GDELT delta → KG
+> 19:30 KG feature emission + monthly graph rebuild (first session of month only)
+> 19:45 PRISM inference — 4 horizons + quantile levels
+> 20:00 regime state (forward algorithm) → Mondrian conformal → publish set
+> 20:15 SHAP attribution → LLM explanation, published names only
+> 20:30 snapshot → Postgres + Redis · immutable log · MLflow
+> 08:00 publish swing + long-term
+> 09:00 pre-open re-filter: drop upper-circuit and F&O-ban names
+> 09:12 pre-open auction data → intraday inference
+> 09:20 publish intraday
+> 15:15 outcome recording for intraday; T+h for other horizons
+
+### The deterministic scorer, retained but normalised
+
+SignalForge's four-layer weighted score is kept — it is auditable, cheap, and gives a non-ML fallback
+if the model pipeline fails. One change is required.
+
+The original rules are absolute: RSI < 35 → +20 fires for every stock in a market-wide selloff,
+which is the same beta contamination §3.1 removes at the label level. The scorer's component outputs
+are therefore cross-sectionally z-scored within each date before entering the feature matrix.
+
+This also happens to be a free defence against structural breaks. When peak margin rules cut retail
+leverage in 2021, every stock's delivery percentage shifted together — a time-series normalised
+feature sees a huge discontinuity, while a cross-sectionally z-scored feature sees nothing, because the
+level moved and the ranking did not.
+
+> **THE TWO-PART DEFENCE, STATED ONCE**
+>
+> Cross-sectional normalisation kills level breaks. Rolling training windows kill relationship breaks.
+> Neither alone is sufficient. Together they are a complete and defensible answer to Indian microstructure
+> non-stationarity — demonetisation, peak margin, MF recategorisation, T+1, F&O curbs.
+
+## Training Protocol
+
+### Four stages
+
+| # | STAGE | DATA | DURATION | OUTPUT |
+|—|—|—|—|—|
+| 1 | SSL pretraining | ~1M unlabelled sequences, US + India, ending before the fold boundary | 12--48 h per fold | Encoder checkpoint |
+| 2 | Multi-horizon supervised fine-tune | Fold training window, 4 labels per sample | 1--3 h × 10 seeds | Ranking + quantile heads |
+| 3 | Regime head specialisation | Same window, partitioned by HMM state | < 1 h | Three output heads |
+| 4 | Conformal calibration | Rolling 250-day window before test | Minutes | Per-regime quantiles |
+
+### Walk-forward discipline
+
+Rolling window, not expanding. Four years train, one validate, one test, rolled by one year — roughly
+fifteen out-of-sample folds over twenty-one years.
+
+Rolling matters because Indian market structure has broken repeatedly. Under an expanding window the
+2025 model is partly fitted on 2006 microstructure, which is contamination rather than data. Under a
+rolling window, 2006 trains the 2010 model and never touches the 2025 model.
+
+The benefit of deep history is therefore an evaluation benefit: ten years gives ~5 test folds,
+twenty-one gives ~15. That is the difference between "our IC was 0.04" — an anecdote — and
+"our IC was 0.04 \pm 0.015 across fifteen out-of-sample years" — a result.
+
+> **PURGING AND EMBARGO**
+>
+> Embargo equals the label horizon, per horizon: 1 day intraday, 5 days swing, 20 and 60 for the longer
+> heads. In multi-task training the longest horizon governs — a 60-day head means a 60-day embargo for
+> the whole batch. This is a real cost of multi-task learning and must be stated rather than quietly
+> ignored.
+
+> **SEEDS**
+>
+> Ten seeds, not five. Compute is free and seed variance at 5,000 effective samples is large. All reported
+> figures are mean \pm standard deviation across seeds and folds. A single-seed number is noise, and
+> quoting one in a report is not recoverable under questioning.
+
+### Where the long runs actually go
+
+| COMPUTE SPENT ON | HELPS? | WHY |
+|—|—|—|
+| SSL pretraining, 15 folds | Yes | Learns from a million unlabelled sequences. The dominant compute line and the one that earns its cost. |
+| 10-seed ensembling | Yes | Turns a noisy point estimate into a distribution. Embarrassingly parallel. |
+| Nested hyperparameter search | Yes | Prevents tuning on the test fold — the quiet way most reported results inflate |
+| Historical LLM extraction backfill | Yes | One-time bulk job over years of announcements; unlocks news features across the whole walk-forward |
+| Larger supervised head | No | 5,000 effective samples. More parameters fit noise. |
+| More epochs on the task head | No | Early stopping on validation rank IC governs; extra epochs overfit |
+| Neural architecture search | Actively harmful | A model free to redesign itself against 5,000 samples finds noise and reports it as structure |
+
+## Evaluation
+
+For a project of this kind the evaluation chapter carries more weight than the architecture chapter. A
+modest model measured honestly is a stronger submission than a sophisticated model measured carelessly,
+and any examiner who knows the field sees the difference immediately.
+
+### Metrics
+
+| METRIC | DEFINITION | PURPOSE |
+|—|—|—|
+| Rank IC | Daily Spearman correlation, predicted vs realised cross-sectional rank | Primary. Measures ordering skill directly. |
+| IC-IR | Mean rank IC \div its standard deviation | Consistency. IC 0.03 every day beats IC 0.06 half the time. |
+| NDCG@10 | Top-weighted ranking quality at 10 | The product metric — this is the shortlist |
+| Net top-decile spread | Top minus bottom decile, after all costs | The economic bottom line |
+| Hit rate, realised R, stop-out rate | Path-dependent outcomes with SL active | Required once §3.8 levels exist — rank IC alone no longer suffices |
+| Expected value per signal | Net of costs, with SL and target applied | The number that actually determines whether the product is useful |
+| Conformal coverage | Realised vs nominal, per fold, per regime bin | The evidence for the calibration claim |
+| Extraction precision/recall | Per event type, against 500 hand-labelled articles | The evidence that the agent layer is trustworthy |
+| Abstention rate | Share of days publishing fewer than 10 | Characterises behaviour. A healthy system abstains. |
+
+### The Indian transaction cost model
+
+> **BUILD THIS IN STAGE 6 — BEFORE FEATURES, BEFORE ANY MODEL**
+>
+> The largest risk to this project is not that the architecture fails. It is that a sophisticated system
+> is built over twenty weeks and then found to have no edge net of Indian frictions. Build the cost model
+> early and run a momentum baseline through it in week four. A negative answer in week four leaves time to
+> respond by widening the horizon or tightening the universe. The same answer in week twenty leaves
+> nothing.
+
+| COMPONENT | DELIVERY (SWING / LONG-TERM) | INTRADAY |
+|—|—|—|
+| STT | 0.1% both sides | 0.025% sell side only |
+ - Brokerage | \multicolumn2lDiscount-broker schedule; document the assumption
+ - Exchange charges | \multicolumn2lNSE published schedule
+ - GST | \multicolumn2lOn brokerage + transaction charges — a tax on the fees, easy to omit, and omitting it flatters results
+ - Stamp duty | \multicolumn2lBuy side, state-varying
+ - SEBI turnover fee | \multicolumn2lSmall but present
+ - Impact cost | \multicolumn2lNSE published, per security. The component most projects omit and the one that eats marginal signals. There is no excuse for a flat slippage assumption when NSE publishes the real figure.
+| **Round-trip total** | **~0.25--0.30%** | **~0.06--0.10%** |
+
+> **A CORRECTION WORTH CARRYING INTO THE REPORT**
+>
+> Intraday is cheaper per round trip than delivery in India, not more expensive — STT is 0.025%
+> sell-side only versus 0.1% both sides. What makes intraday hard is signal-to-noise and execution
+> timing, not cost. An earlier version of this analysis had it backwards.
+
+All rates live in a date-versioned configuration table, so a backtest over 2011 applies 2011's STT rate.
+Point-in-time correctness applies to costs as much as to features, and STT rates have changed materially
+within the sample.
+
+### The ablation suite
+
+Each ablation isolates exactly one claim. This is what makes the project research rather than a
+demonstration.
+
+| # | CONFIGURATION | CLAIM TESTED |
+|—|—|—|
+| A0 | Momentum 12-1 | The dumb baseline. Many published ML equity results fail to beat it net of costs. |
+| A1 | SignalForge port — deterministic score + XGBoost binary, thresholded | The headline comparison. Does the reformulation beat the predecessor on identical Indian data under identical walk-forward conditions? This is the experiment that substantiates the entire v3 rationale. |
+| A2 | LightGBM lambdarank, no pretraining, no graph | Isolates the ranking objective from everything else |
+| A3 | PRISM - SSL pretraining (random init encoder) | Does cross-market pretraining help? The core claim of §3.3. If yes, this is a publishable transfer-learning result for emerging-market equities. |
+| A4 | PRISM - US corpus (India-only pretraining) | Separates "pretraining helps" from "cross-market transfer helps" — two different claims |
+| A5 | PRISM - multi-horizon (5d head only) | Does multi-task supervision improve label efficiency? |
+| A6 | PRISM - graph | Does relational structure contribute? |
+| A7 | PRISM - promoter-group edges only | The India-specific claim. Sector and correlation edges retained. Degradation here demonstrates a market-structure effect with no US analogue. |
+| A8 | PRISM - KG features | Does the agent layer contribute measurably, or only decoratively? |
+| A9 | PRISM - regime heads | Does regime specialisation beat a regime embedding? |
+| A10 | PRISM - conformal (publish top-10 always) | Does abstention improve net EV, or only reduce volume? |
+| A11 | PRISM - stop-loss (hold to horizon) | Path-dependence: does the SL add or destroy expected value, per horizon? |
+| A12 | PRISM full | The system as specified |
+
+A1, A3, and A7 are the three that matter. A1 substantiates the refinement claim against SignalForge. A3
+substantiates the pretraining claim, which is the novel methodological contribution. A7 substantiates
+the India-specific claim. A negative result on any of them is still a result and should be reported as
+one — a well-measured negative finding outranks an unmeasured positive claim.
+
+### Era analysis and stress windows
+
+Report rank IC by era across the full walk-forward, covering the stress windows the transfer document
+correctly identified: 2008 global financial crisis, 2013 taper tantrum, 2016 demonetisation, 2018
+IL&FS/NBFC crisis, 2020 COVID, 2021 retail boom.
+
+Reporting performance through demonetisation and the NBFC crisis is a harder test than any US equivalent
+and is a strong capstone result in itself. If early-period IC differs materially from recent-period IC,
+the project has empirically demonstrated microstructure non-stationarity in Indian equities backed by
+fifteen out-of-sample folds — which converts a data limitation into a finding, and answers the
+inevitable question "why a four-year training window?" with "because we measured where the useful
+history ends."
+
+### Expected results, pre-registered
+
+> **THE NUMBERS TO EXPECT, STATED BEFORE TRAINING**
+>
+> Rank IC 0.03--0.05 for swing is genuinely good. Long-term may run slightly higher; intraday will be
+> lower, perhaps 0.02, because intraday returns carry more microstructure noise.
+> IC above 0.10 means there is a bug. Treat it as a bug report and open the invariant tests — it will be
+> one of the failures in §11.2. If the model reports 85% directional accuracy, there is leakage; that is
+> not a possibility to weigh but a near-certainty to diagnose.
+> Stating these figures in advance is a form of pre-registration. It makes the eventual result more
+> credible whatever it turns out to be, and it removes the temptation to rationalise an implausibly good
+> outcome rather than debug it.
+
+## Technology Stack
+
+| LAYER | CHOICE | RATIONALE |
+|—|—|—|
+| Data | NSE bhavcopy (scraped) | Backbone. Only source of delivery percentage. |
+| | Kite Connect / Dhan / SmartAPI | Intraday 5-min bars, pre-open auction |
+| | GDELT 2.0 GKG via BigQuery | Free historical news at scale — the only viable option for news features across a 20-year walk-forward |
+| | NSE/BSE announcements | Highest signal-to-noise text source. Pre-tagged, timestamped. |
+| | NSDL, RBI DBIE, MOSPI | Flows and macro |
+| ML | PyTorch | Encoder, pretraining, heads |
+| | PyTorch Geometric | R-GAT over the six-edge graph |
+| | LightGBM | lambdarank — retained as an ensemble branch and as baseline A2 |
+| | hmmlearn | Regime HMM. Forward algorithm only. |
+| | MAPIE / custom split conformal | Mondrian-binned calibration |
+| | SHAP | Attribution feeding the explanation layer with real numbers |
+| | Optuna | Nested hyperparameter search |
+| Language | Qwen3 8B or Llama3 8B + LoRA | Replaces FinBERT. Evidence indicates lightweight LLMs surpass FinBERT with minimal or no task-specific training data. |
+| | PEFT / QLoRA | Fine-tuning on 16 GB cloud GPU |
+| | LangChain | Retrieval and tool calls |
+| | LangGraph | Agent orchestration — fixed, inspectable loop |
+| Memory | Neo4j | Knowledge graph — entities, events, relations |
+| | ChromaDB or pgvector | Vector store over announcement and article embeddings |
+| | Groq API | Explanation generation — off the decision path, so latency and model choice carry no risk |
+| Platform | Prefect | One nightly DAG plus one morning DAG. Airflow's overhead is unjustified. |
+| | MLflow | Registry and audit trail. The ablation suite is unreproducible without it. |
+| | PostgreSQL + Parquet + Redis | PIT store, training arrays, snapshot cache |
+| | Docker Compose | Single-VPS reproducible deployment |
+| Compute | Kaggle T4 (16 GB, free) / Colab | SSL pretraining and LLM fine-tuning. Checkpoint aggressively — free tiers have session limits. |
+| | Local RTX 3050 Ti (4 GB) | Supervised fine-tune, nightly inference. Never co-resident with NLP. |
+| Delivery | FastAPI | Async, separate Lite/Pro/Max endpoint families |
+| | Next.js + TradingView Lightweight Charts | Web. Apache-2.0 charting built for candles. |
+| | React Native / Expo | One mobile codebase, two stores. *Full store-submission, offline, and update-strategy detail is new in v4 — see §12.* |
+| | WebAuthn + Argon2id, Razorpay | Passkeys, not stored biometrics. UPI Autopay for recurring INR. |
+
+> **DELIBERATELY ABSENT**
+>
+> No Kafka, no Kubernetes, no vector-database SaaS, no feature-store SaaS. Serving is one cached snapshot
+> identical for every user; the pipeline is two scheduled batches. Every component above answers a
+> specific requirement, and the absence of the fashionable ones is the point — an architecture sized to
+> its problem defends better than one sized to a job description.
+
+## Build Order
+
+Twenty-six stages. Do not start one before the previous stage's check passes against real row counts —
+the discipline the transfer document identifies as its single highest-value habit.
+
+### Phase 0 — Foundation
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 1 | Environment, config, canonical paths | CUDA available, config loads, no missing env vars, one database path fixed in config.py |
+| 2 | Repo scaffold, CI, invariant test skeleton | docker compose up works; empty test suite passes in CI |
+
+### Phase 1 — Data foundation
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 3 | Bhavcopy ingestion + 20yr backfill | Row count matches ticker × trading-day product. The true start date of delivery data is measured and documented — it sets the effective window for the whole project. |
+| 4 | Corporate action engine | No adjusted daily return exceeds its price band without a matching action record, across full history |
+| 5 | Universe + PIT constituents | Per-year membership lists exist; delisted names retained with terminal values |
+| 6 | Transaction cost model *(do early)* | Round-trip cost computable for any security on any historical date at that date's rates, both delivery and intraday |
+| 7 | Momentum baseline through costs — GO / NO-GO | The project's most important number, in week four. Positive net → real edge to pursue. Negative → widen horizon or tighten universe, not more model capacity. |
+
+### Phase 2 — Features
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 8 | Index + macro pipeline | Nifty, Bank Nifty, India VIX, repo, CPI, USDINR populated |
+| 9 | Technical indicators + deterministic scorer | Indicator count matches OHLCV count; scorer returns full dict for a sample ticker |
+| 10 | India block — delivery, F&O, flows, pledging, circuits | Delivery features validated against raw file; missingness masked with indicator, never zero-filled |
+| 11 | Override gates + circuit/ban filters | Gates fire correctly on known historical examples |
+| 12 | PIT feature store | A read as of date t provably returns only information knowable before t |
+
+### Phase 3 — Harness and baselines
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 13 | Walk-forward harness *(before any model)* | A deliberately leaky configuration produces an implausible IC and the harness flags it. A harness that cannot detect leakage cannot certify its absence. |
+| 14 | Baseline A0 + A1 (SignalForge port) | Honest rank IC \pm seed/fold std in MLflow. This is the number PRISM must beat. |
+| 15 | Baseline A2 — LightGBM lambdarank | Ranking objective isolated from pretraining and graph |
+
+### Phase 4 — Language and knowledge
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 16 | Announcement ingestion + entity resolution | Announcements ticker-tagged, date range verified. Build this before the news pipeline. |
+| 17 | GDELT BigQuery extraction + NSE entity mapping | Historical article volume per year plausible; entity resolution precision measured on a sample |
+| 18 | LLM extraction pipeline + LoRA fine-tune | Precision/recall per event type against 500 hand-labelled articles, reported. This is the evidence the agent layer is trustworthy. |
+| 19 | Knowledge graph schema + writers | Entities and edges populate and are queryable; every fact carries a source_span |
+| 20 | KG feature emission + graph edge derivation | Features present in matrix; every graph snapshot provably built from trailing data only |
+
+### Phase 5 — PRISM
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 21 | SSL pretraining | Reconstruction loss converges. Per-fold temporal split asserted by test — no encoder sees data after its fold boundary. |
+| 22 | Multi-horizon heads + R-GAT + fine-tune | Trains within 4 GB; rank IC reported against stage 14 baseline, 10 seeds |
+| 23 | Regime HMM + specialised heads | Explicit test asserting no Viterbi path at inference |
+| 24 | Conformal + quantile levels | Coverage plot produced — realised vs nominal, per fold, per regime bin |
+
+### Phase 6 — Science and production
+
+| # | STAGE | PASSING CHECK |
+|—|—|—|
+| 25 | Ablations A0--A12 + era analysis *(the thesis)* | All results with seed and fold variance. A1, A3, A7 answered. Freeze the core after this. |
+| 26 | Pipeline, API, clients, outcome loop, deployment | Ten unattended runs; Lite token against a Pro endpoint returns 403 with no body; public paper-trading record live from the immutable log. Mobile client store submission is part of this stage — see §12. |
+
+> **TWO ORDERINGS THAT LOOK WRONG AND ARE DELIBERATE**
+>
+> The cost model is stage 6, before any features. It gates the go/no-go at stage 7. The walk-forward
+> harness is stage 13, before the model it judges. Both invert the intuitive order, and both exist to make
+> the project fail fast rather than fail late.
+
+## Invariants and Risk
+
+### Invariants — carried from SignalForge, extended
+
+> **CARRY UNCHANGED**
+>
+>
+> - The LLM never emits a BUY/SELL/HOLD decision. PRISM decides; the LLM narrates.
+> - No trade execution. Signalling and information only.
+> - Every scheduled job wrapped so one failure never stops the scheduler.
+> - All secrets in .env, loaded through config.py. Never hardcoded.
+> - Walk-forward on historical constituents only. Never today's index projected backwards.
+> - Every signal row stores its full feature snapshot as JSON — required for retraining and audit.
+> - Every signal shown to a user carries a disclaimer.
+> - One database path, one model path, fixed in config.py on day one.
+>
+
+> **NEW IN V3**
+>
+>
+> - Agents write to the knowledge graph. Agents never write to the signals table.
+> - KG facts are extractive and carry a source_span. No generative judgments enter the feature
+> matrix.
+> - Pretraining respects the fold boundary. No encoder is fine-tuned on a fold whose test period
+> precedes its pretraining cutoff.
+> - Embargo ≥ label horizon, per horizon. Configuration parameter, never a constant.
+> - NLP inference and model training are never co-resident on the 4 GB card.
+>
+
+### The silent failures
+
+These fail without raising an exception. The only defence is a test that asserts the invariant directly,
+which is why stage 13 precedes stage 21. Five were identified in v3, covering Stages 4 through 8. Eight
+more, extending the same methodology through Step 14, are new in v4 and specified in full in §13.
+
+| # | BUG | SYMPTOM | TEST |
+|—|—|—|—|
+| 1 | Unadjusted corporate actions | Spurious -50% returns; ranker learns bonus calendars | No adjusted return outside its price band without an action record |
+| 2 | Graph leakage | Nothing errors; IC quietly rises | Every graph snapshot built from trailing windows only |
+| 3 | Normalisation leakage | Invisible; IC roughly doubles | Cross-sectional z-score per date; assert no full-history statistics |
+| 4 | Viterbi at inference | Backtest spectacular, live results noise | Assert forward algorithm only |
+| 5 | Pretraining leakage | Every fold silently invalid; the most damaging of the five because it contaminates all folds at once | Assert encoder checkpoint cutoff < fold test start - embargo |
+ - 6--12 | \multicolumn3p13.6cmSteps 9 through 14 — graph fusion, regime routing, ranking, sizing, conformal calibration, cost-aware abstention, and explanation generation. *New in v4, in full in §13.*
+
+Plus the two from the transfer document that are not model bugs but cost equal time: date-type mismatch
+in validation queries (compare ISO strings, never integers, and assert row counts per window), and
+verification scripts querying the wrong table — every stage check must query the table that stage
+actually writes to.
+
+### Risk register
+
+| RISK | SEV. | MITIGATION |
+|—|—|—|
+| No edge net of costs | Critical | Stage 6 before stage 8; stage 7 momentum baseline in week four. Gross-profitable and net-dead is the normal outcome. Fallbacks: longer horizon, tighter universe — not more model capacity. |
+| Pretraining doesn't transfer | High | A3 and A4 measure it directly. A negative result is publishable — "cross-market transfer does not help emerging-market equity ranking" is a real finding. The architecture degrades gracefully to A2. |
+| Delivery data too shallow | High | Measured at stage 3, before commitment. Per-fold feature availability handles it; era analysis converts it into a finding. |
+| Silent leakage | High | §11.2 and §13 tests. Treat IC > 0.10 as a bug report. |
+| Free cloud GPU limits | Medium | Kaggle/Colab sessions time out. Checkpoint every epoch; design pretraining to resume. Budget for one paid GPU week if needed. |
+| GDELT entity resolution poor | Medium | Announcements are pre-tagged and carry most of the signal. GDELT degrades to a co-mention edge source only. |
+| Extraction quality low | Medium | Measured at stage 18 before the KG is built on top. If precision is poor, restrict to high-confidence event types. |
+| Scope overrun | High | See §11.4. Stages 1--25 are a complete dissertation without the product. |
+| Index licensing | Medium | Sensex is BSE IP; Nifty and Bank Nifty are NSE Indices IP. Review display and redistribution terms before public launch. |
+| Paid tiers vs SEBI RA | Low / High impact | Consideration is the trigger, and "entry, target, SL" is the textbook form of a recommendation. Build payments in test mode; resolve registration before live keys. *Store submission raises the stakes on this unchanged risk — see §12.2.* |
+
+### Descope order — corrected in v4
+
+> **CHANGE FROM V3**
+>
+> v3 listed *Mobile app → web only* as the first item to cut if time compresses. This is
+> superseded: mobile delivery is now a supervisor-mandated requirement following the Phase I interim
+> presentation, not a stretch goal. The line is removed. The remaining order is unchanged.
+
+If time compresses, cut in this order. Everything above the line remains a complete and defensible
+dissertation.
+
+- Intraday horizon → swing + long-term, intraday marked future work
+- GDELT historical news → announcements only (they carry most of the signal anyway)
+- Knowledge graph → keep LLM extraction as flat features, drop the graph layer
+- Multi-agent → single extraction agent
+
+*Line: stages 1--25 alone are a complete dissertation. Below this the science itself is being
+cut — do not.*
+
+> **THE FAILURE MODE TO ACTUALLY EXPECT**
+>
+> Not running out of time. Spending week 20 tuning an agent prompt while the cost model is still
+> unwritten. The decision path — stages 1 through 25 — is the critical path. The agent and knowledge
+> layers make it presentable. In that order, or the project does not survive its own demonstration.
+
+## Mobile Delivery Architecture *(new in v4)
+*
+
+### Positioning within Layer 8
+
+§9 names the mobile stack in one line: *React Native / Expo — one mobile codebase, two
+stores*. That choice stands. This section specifies what sits around it.
+
+Layer 8 (Delivery) already separates the API from its clients: FastAPI serves Lite, Pro, and Max tier
+endpoint families to whichever client calls them. That separation is what makes mobile additive rather
+than disruptive — the web app (Next.js) and the mobile app (React Native / Expo) are two clients of
+one API, not two independent systems that happen to share a backend.
+
+> **WHY EXPO, NOT BARE REACT NATIVE**
+>
+> Expo's managed workflow handles code signing, store submission tooling (EAS Build and EAS Submit), and
+> over-the-air updates without hand-configuring Xcode and Android Studio build pipelines directly. For a
+> single-developer or small-team capstone shipping to both stores under a deadline, this materially
+> reduces the surface area an AI coding agent can get subtly wrong. Bare React Native remains an escape
+> hatch if a specific native module Expo does not support becomes necessary.
+
+### Store submission requirements
+
+| STORE | REQUIREMENT | LYNX-SPECIFIC CONSIDERATION |
+|—|—|—|
+| Apple App Store | Apple Developer Program enrolment; app review covers functionality, data use, and financial-app scrutiny | LYNX names entry, target, and stop-loss levels. Apple's review guidelines on finance apps require clear disclaimers that content is informational, not investment advice — the disclaimer invariant already in §11.1 satisfies this, but it must be visible pre-download in the App Store listing itself, not only inside the app |
+| Google Play Store | Play Console developer account; Data Safety form; financial-services content policy declaration | Play's financial-services policy requires disclosure that the app does not execute trades and does not provide personalised investment advice — consistent with the existing signalling-only positioning, but the declaration is a distinct submission step, separate from the in-app disclaimer |
+| Both | Privacy policy URL, required for submission to either store | Must state what user data is collected (auth credentials, tier/subscription status) and confirm no trade-execution capability exists |
+
+> **THE SEBI RA QUESTION, RESTATED FOR APP STORES**
+>
+> §11.3 already flags "Paid tiers vs SEBI RA" as a risk: consideration in exchange for
+> entry/target/stop-loss levels is the textbook form of a recommendation, and SEBI Research Analyst
+> registration may apply once payment is involved. Store submission raises the stakes on this unchanged
+> risk rather than creating a new one — both Apple and Google require an explicit financial-content
+> declaration at submission time, which means this question must be resolved, not just documented, before
+> either store submission, not merely before public launch as originally scoped.
+
+### Offline behaviour and update strategy
+
+LYNX produces at most ten published signals per day, generated once nightly (Layer 5--6) and remaining
+valid until the next cycle. This shapes what the mobile client needs to handle when offline:
+
+- **Cache the last published signal set locally.** A user opening the app without connectivity
+sees the most recent signals with a visible timestamp, not a blank screen or an error state.
+- **No offline computation.** PRISM never runs on-device. The mobile app is a pure client of
+the FastAPI backend; this keeps the invariant "PRISM is the only decision-maker" (§6.1) intact
+regardless of delivery surface.
+- **Over-the-air updates via Expo** for JavaScript-layer changes (UI fixes, copy changes)
+without a new store submission cycle. Native-layer changes (new permissions, new native modules) still
+require full store review.
+
+### Authentication carries over unchanged
+
+§9 already specifies WebAuthn plus Argon2id — passkeys, not stored biometrics. This applies
+identically on mobile: platform biometric APIs (Face ID, Android biometric prompt) authenticate locally
+against a device-held key, and the passkey standard is what actually reaches the server. No biometric
+data is transmitted or stored server-side on any client, web or mobile.
+
+## Extended Invariant-Test Methodology *(new in v4)
+*
+
+### The pattern, stated generally
+
+§11.2 names five silent failures — bugs that produce no exception, no error, and often a
+*better-looking* result, which is what makes them dangerous. The defence documented there is a
+test that asserts the invariant directly, rather than trusting that correct-looking output means correct
+logic. That pattern was applied through Stage 8 (pretraining leakage). This section extends it forward
+through Stage 16, because a coding agent implementing the ranking, sizing, conformal, and explanation
+stages is exactly as capable of producing plausible-but-wrong code as one implementing the encoder was.
+
+The general form, for any new component: identify the one failure mode that would look like success —
+runs without error, produces a plausible number — while quietly relying on information or logic the
+system is not supposed to have. Write a test against a hand-constructed input where you know the correct
+answer independently of the model, and confirm the test fails against a deliberately broken
+implementation before trusting that it passes against the real one.
+
+### Extended silent-failure table
+
+| # | STAGE | BUG | SYMPTOM | TEST |
+|—|—|—|—|—|
+| 6 | Step 9 — Multi-hop graph fusion (R-GAT) | Attention aggregates over a future-dated edge (graph snapshot not properly trailing-windowed at the batch level, even if Stage 5's snapshot itself is correct) | Nothing errors; IC quietly rises, same signature as failure 2 | Feed a synthetic node whose only informative edge is dated after the prediction date; assert the prediction is unchanged from the no-edge case |
+| 7 | Step 10 — Regime routing (HMM) | Same failure class as the Viterbi invariant, but at the routing layer specifically: a routed head trained end-to-end could let gradient leak regime information computed with future observations | Backtest spectacular, live results noise — same symptom as failure 4, different injection point | Assert the regime label used to route any training sample at time t is computed using only observations up to t |
+| 8 | Step 11 — Multi-horizon ranking | Horizon labels misaligned by an off-by-one, so the 5-day head is silently trained against 4-day or 6-day forward returns | Nothing errors; the model trains, converges, and the loss curve looks normal | Construct a hand-labelled toy sequence with a known price path; assert each horizon head's label matches the manually computed forward return for exactly that horizon |
+| 9 | Step 12 — Trade sizing (quantile heads) | Quantile crossing: the tau=0.1 output ends up above the tau=0.5 or tau=0.9 output, producing a stop-loss above the entry price or a target below it | Nothing errors; individual predictions look like normal numbers, only wrong relative to each other | Assert tau=0.1 output ≤ tau=0.5 output ≤ tau=0.9 output on every published signal; reject publication if violated |
+| 10 | Step 13 — Conformal calibration | Calibration window itself contains data from inside the test fold (the 250-day window drawn without respecting the fold boundary), inflating apparent confidence | Coverage looks correct in backtest, degrades live — the conformal-specific version of leakage | Assert every date in the calibration window strictly precedes the earliest test-fold date; recompute the bound on a synthetic case with a known analytical quantile and check it matches |
+| 11 | Step 13 — Cost-aware abstention | Round-trip cost comparison uses a stale or wrong-side cost figure (long-side cost applied to what is structurally a short, or a cost constant that does not reflect §8.2's date-versioned rates) | Signals publish that should have abstained; net returns look worse than backtest with no obvious cause | Assert the cost function called at publish time matches the position side, and assert its output changes across the STT regime-change dates already documented at Stage 6 |
+| 12 | Step 14 — Explanation generation | LLM narration states a fact not present in the SHAP attribution or retrieved evidence passed to it — ungrounded generation slipping past the "extraction only, never generative judgment" invariant (§11.1) that was written for the knowledge graph but applies equally here | Explanation reads fluently and plausibly; nothing flags it as unsupported | Assert every named driver in the generated explanation text appears in the SHAP feature list or the retrieved evidence set passed as input; reject and regenerate or fall back to a templated explanation if not |
+
+> **ON QUANTILE CROSSING SPECIFICALLY**
+>
+> This is worth flagging as the single most likely of the new failures to actually occur, because
+> quantile regression trained with independent pinball losses per quantile has no structural guarantee of
+> monotonicity between quantiles unless it is explicitly enforced. An AI coding agent implementing "three
+> quantile heads with pinball loss" from a natural-language description will very plausibly produce three
+> independently trained heads with no crossing constraint, because the natural-language description does
+> not obviously imply one is needed. Test #9 above is not optional.
+
+### Where this leaves the full invariant suite
+
+Combined with §11.2, the full test suite now covers every stage from corporate action adjustment (Stage
+4) through explanation generation (Step 14) with a targeted adversarial test — twelve tests in total,
+four already passing from the existing build, eight new ones specified above still to be written as
+those stages are implemented. Delivery (Layer 8) and self-improvement (Layer 9) are excluded from this
+table deliberately: they are operational rather than statistical, and their correctness is better
+verified through integration testing than through the hand-constructed-input pattern used here.
+
+## Build Sequencing and Session Discipline
+
+### Backend first, clients second
+
+This subsection records the sequencing decision that governs how §12 and §13 actually get built.
+
+- **Backend first.** Complete and verify Layers 0 through 7 (data through explanation) plus the
+Layer 8 API surface, using the extended invariant-test methodology in §13 alongside the existing §11.2
+tests, before beginning either client application.
+- **Clients second.** Build the Next.js web client and the React Native / Expo mobile client
+against the verified, stable API. Both clients consume the same endpoints; neither embeds any decision
+logic.
+- **Rationale.** A UI defect is visible the moment the screen renders and is cheap to fix at any
+point in the app's lifetime, including as a post-launch update. A defect in the ranking, calibration, or
+regime-routing logic is frequently invisible — it produces a plausible number, not an error — and
+becomes far more expensive to find once client applications, and the review cycles of two app stores,
+are built on top of it.
+
+Multiple AI coding tools and agents may be used to write both the backend and the client applications.
+For the backend specifically, correctness is verified through the targeted invariant tests in §11.2 and
+§13, written per risky component, rather than through code review alone.
+
+### Session discipline
+
+The transfer document identifies scope drift across long AI-assisted sessions as a real cost: the system
+was silently rewritten as swing-only, then given a trade-execution module that violated a core
+invariant. Two habits prevent recurrence.
+
+- Re-paste this document at the start of every session. It is the canonical architecture; anything
+contradicting it is drift.
+- Keep an explicit forbidden list. For LYNX: no trade execution; no LLM in the decision path; no
+generative facts in the knowledge graph; no learned gating in the regime router; no architecture search;
+no pretraining across a fold boundary.
+
+> **THE SENTENCE THAT GOVERNS THIS DOCUMENT**
+>
+> Carried unchanged from the transfer document, because it is the best line in it: a validated 62% is a
+> far better capstone result than an unverified 73%. LYNX v4 has more moving parts than SignalForge, and
+> now more delivery surfaces too, and correspondingly more places for a silent failure to hide. Verify at
+> every stage.
+
+LYNX v4 · Technical Architecture Plan — canonical, supersedes v3 and the standalone v4 addendum

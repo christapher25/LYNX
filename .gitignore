@@ -1,0 +1,45 @@
+# LYNX .gitignore
+#
+# Data, logs, models and caches are pipeline OUTPUT, not source: they are large (data/ alone is multiple GB),
+# regenerable from the ingesters/pipelines in this repo, and specific to the machine that produced them (paths,
+# timing evidence). None of it belongs in version control. config.py is the only place a path is defined; nothing
+# here should ever need to special-case a path that isn't already covered by one of these directories.
+
+# --- secrets -----------------------------------------------------------------------------------
+.env
+!.env.example
+
+# --- data: raw archives, processed features, checkpoints (see config.py for the canonical paths) ----------------
+/data/raw/
+/data/processed/
+/data/constituents/
+
+# --- logs and per-run evidence --------------------------------------------------------------------
+/logs/
+/data/raw/_logs/
+
+# --- models: checkpoints and graph snapshots (config.py CHECKPOINT_DIR / GRAPH_SNAPSHOT_DIR) ----------------
+/models/checkpoints/
+/models/graph/
+
+# --- Python -------------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- virtual environments -------------------------------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- editors / OS ---------------------------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- misc caches produced by tooling in this repo, not source --------------------------------------
+unsloth_compiled_cache/
