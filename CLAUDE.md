@@ -47,12 +47,42 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
   and healthy. Environment, invariant test skeleton, bhavcopy ingestion,
   corporate action engine, point-in-time universe, transaction cost model,
   momentum baseline (GATE VERDICT = GO), index/macro data all done.
-- **Stage 9: complete and verified (2026-09-24).** `signals/indicators.py`
-  reads Stage 4/5 Parquet and writes the Postgres `indicators` table
-  (2,333 symbols, 6,920,547 rows; 18 symbols under 200 rows skipped by
-  design). `scripts/verify_stage9_checkpoint.py` passes: row counts match
-  OHLCV, warm-up rows are NULL not 0, DB matches a fresh recompute,
-  `score_signal()` returns the full audit dict. Known gaps, not Stage 9
+  - **Stage 3 revisited and refreshed (2026-09-30).** Two of the three "Known gaps in earlier stages" from
+    DATA_NOTES.md §11 were fixed with tests first, not just documented: (1) the 2020-07-13 two-digit-year date
+    bug — `data/ingest_bhavcopy.py` now retries the four-digit `%d-%b-%Y` parse with `%d-%b-%y`
+    (`_legacy_dates`, mirroring the fix `ingest_fno_bhavcopy.py` already had for the same day), guarded by
+    `tests/test_ingest_bhavcopy.py`'s `TestTwoDigitYearGlitch` (reproduces the real symptom, confirms the fix,
+    and proves a genuinely wrong date is still rejected via the requested-date check); the day is re-ingested,
+    2,001 rows recovered. (2) The two lost delivery days: **2022-08-08** was NSE serving a genuine XLSX file
+    (ZIP/OOXML) at the plain `.csv` URL — `data/ingest_bhavdata.py`'s new `read_bhavdata_content()` detects the
+    ZIP magic bytes and dispatches to `pd.read_excel` (needs `openpyxl`, added to `requirements/base.txt`);
+    2,255 rows recovered, fixture at `tests/fixtures/bhavdata/sec_bhavdata_full_08082022.xlsx`. **2024-02-19**
+    had exactly one impossible row (`WTICAB`, series `ST`, `DELIV_QTY` > `VOLUME`) that was rejecting the whole
+    ~2,646-row file; `validate()` now quarantines only the offending row's `DELIV_QTY`/`DELIV_PER` (NaN, never
+    guessed) when the impossible share is below `DELIV_QUARANTINE_MAX_SHARE` (2%), and still hard-fails above
+    it (`tests/test_ingest_bhavdata.py`'s `TestDeliveryQuarantineNotWholeFileRejection`, including a mutation
+    check that 2 bad rows in a 9-row file still fails loudly). Both ingesters, plus `data/ingest_indices.py`
+    (which had no CLI at all before), gained a `--weekends` flag. **Weekend backfill, real network runs, all
+    three archives:** equity bhavcopy 42 new sessions (2003-2026, all 30 known F&O dates matched plus 12
+    pre-F&O 1996-1999 sessions and one investigated oddity — 2012-11-11 is 14 gold/commodity-ETF rows, not a
+    real session, confirmed against F&O's own manifest recording it as `holiday`); delivery 9 (all from
+    2019-10-27 onward, delivery's own start); indices 17 (from 2012-03-03, indices' own start). Two transient
+    network failures during the crawl (`IncompleteRead`, a DNS resolution error) were targeted-retried and
+    both resolved to genuine `holiday` (no real session), not data loss. **Refreshed to latest:** equity
+    bhavcopy and delivery both now run to **2026-09-29** (were capped at 2026-09-04); one further stale-reserve
+    rejection (2026-09-14, a genuine Monday holiday) is expected, not a gap.
+- **Stage 9: complete and verified (2026-09-24; full recompute + re-verified 2026-09-30 after the Stage 3
+  refresh).** `signals/indicators.py` reads Stage 4/5 Parquet and writes the Postgres `indicators` table
+  (2,333 symbols; row count grew with the Stage 3 refresh — 13 symbols now skipped for <200 rows, down from
+  18, since the weekend/2020-07-13 fixes gave some of them enough history). `scripts/verify_stage9_checkpoint.py`
+  passes: row counts match OHLCV, warm-up rows are NULL not 0, DB matches a fresh recompute,
+  `score_signal()` returns the full audit dict. **Found and fixed 2026-09-30:** a `--no-resume` full recompute
+  only overwrites rows for symbols in the CURRENT universe — it never deletes rows for a symbol that fell
+  OUT of the universe (the Stage 5 rebuild below legitimately dropped `RATNAVEER` from every year's top-700
+  once corrected turnover data was in), so its indicators sat stale in Postgres with nothing marking them so.
+  The checkpoint's own "indicator rows == OHLCV rows for every universe symbol" check caught it (`extra=['RATNAVEER']`).
+  Fixed with `signals.indicators.prune_orphaned_symbols` (tests first, `tests/test_indicators.py`'s
+  `TestPruneOrphanedSymbols`), now called automatically at the start of every pipeline run. Known gaps, not Stage 9
   blockers: the scorer's market-context layer has no
   `nifty500_pct_above_200dma` input from any built stage and only one day of
   `fii_net_flow_cr` (forward capture), so it currently scores off VIX/USDINR
@@ -73,42 +103,45 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
   just installed>` (not a valid requirement); pinned to `0.29.0`, the version the lockfile pairs with `torch 2.14.0`.
   `lockfile.txt` was UTF-16 and missing `loguru`/`tenacity`; regenerated as UTF-8 from the live venv (only those two
   and `win32-setctime` added). `hmmlearn` moved from `local.txt` to `base.txt`.
-- **Stage 10: in progress. Delivery, pledging and circuits feature blocks complete and verified; F&O raw ingestion
-  complete and verified but its feature block is not built; flows built but FAILING its checkpoint (FII
-  publication-timing evidence gap, pre-existing and unrelated to today's work — detail below).** India block
-  (delivery/F&O/flows/pledging/circuits). Sections marked 2026-09-30 below were checked against disk that day;
-  sections still marked 2026-09-24 (delivery, F&O, breadth) were not re-ingested today but delivery and F&O were
-  re-verified, unchanged, by the same-day `scripts/verify_stage10.py` combined-checkpoint run (breadth has its own
-  separate verifier and was not re-run today).
-  - **Delivery sub-block: complete and verified (2026-09-24).** `features/blocks/delivery.py` writes
-    one Parquet per symbol to `data/processed/features/delivery/` (2,333 files, 6,923,017 rows,
-    row-aligned 1:1 with Stage 4 price rows; 70.7% flagged missing = pre-2019 history).
+- **Stage 10: in progress. Delivery, F&O, pledging and circuits all rebuilt against the refreshed Stage 3/4/5 data
+  and PASS; flows FAILS its checkpoint on one known, un-backfillable publication-timing gap only — detail below.**
+  India block (delivery/F&O/flows/pledging/circuits). `python -m scripts.verify_stage10`: **4/5 PASS, confirmed
+  fresh 2026-09-30** after the Stage 3 cleanup cascade (delivery/F&O/pledging/circuits verifiers re-run standalone
+  too, all green). Breadth has its own separate verifier and was **not** re-run today (out of this cascade's
+  explicit scope) — its data is now stale relative to the refreshed Stage 4/session calendar; see its own bullet.
+  - **Delivery sub-block: complete and verified (2026-09-30, rebuilt against the refreshed Stage 3/4 data).**
+    `features/blocks/delivery.py` writes one Parquet per symbol to `data/processed/features/delivery/` (2,333
+    files, 6,978,660 rows — up from 6,923,017 pre-refresh — row-aligned 1:1 with Stage 4 price rows).
     Features: `delivery_pct`, `delivery_pct_chg_5d/20d` (percentage points),
     `delivery_qty_ratio_20d` (delivered qty / trailing-20 mean of delivered qty, split/bonus-adjusted
     with Stage 4's ADJ_VOLUME/VOLUME factor, needs 15 of 20 observed days), one shared
     `is_missing_delivery` flag (features NaN exactly where it is True). `scripts/verify_stage10_delivery.py`
-    passes (independent raw-file recomputation; re-run 2026-09-24 11:55, every check passes). Raw-archive facts that shaped it: 5 files are named
+    passes (independent raw-file recomputation). Raw-archive facts that shaped it: 5 files are named
     for one day but hold another's rows (loader keys on the embedded date); 4,191 EQ rows on 5 dates
-    have a DELIV_PER contradicting their own DELIV_QTY/VOLUME and are quarantined as missing.
-  - **Upstream gap found, not fixed:** Stage 3's bhavcopy ingest FAILED for 2020-07-13 ("2001 rows
-    failed date parsing"), so the OHLCV panel, indicators and delivery features have no row for that
-    day (rolling windows span it). Bhavcopy also ends 2026-09-04 while delivery files run to 2026-09-16.
-  - **F&O sub-block: raw ingestion complete and verified (2026-09-24); no F&O feature block yet.**
-    `python -m scripts.verify_stage10_fno` PASSES (exit 0) against the files on disk. Every figure below was read from
-    disk and the manifests on 2026-09-24, not carried forward from earlier notes.
+    have a DELIV_PER contradicting their own DELIV_QTY/VOLUME and are quarantined as missing (2020-07-13 is
+    now one of them, 1 row — a real quarantine on real data, now that the day is no longer entirely missing).
+    **Found and fixed 2026-09-30:** a `--no-resume` rebuild left `RATNAVEER`'s stale pre-refresh file on disk
+    after it fell out of the universe (same root cause as the Stage 9 fix above); fixed with the shared
+    `features.blocks.common.prune_orphaned_symbol_files`, called by delivery/pledging/circuits alike.
+  - **F&O sub-block: raw ingestion complete and verified (2026-09-30, caught up to match the refreshed equity
+    calendar); no F&O feature block yet.** `python -m scripts.verify_stage10_fno` PASSES (exit 0) against the
+    files on disk. Figures below were read from disk and the manifests on 2026-09-24 unless marked 2026-09-30.
     - *Bhavcopy* (`data/ingest_fno_bhavcopy.py` -> `data/raw/fno_bhavcopy/`): 6,517 daily files (6,487 weekday + **30
-      weekend sessions**), 2000-06-12 -> 2026-09-23, 183.6M contract rows, 2.4 GB; disk == manifest `ok` days and every
-      row count matches. NSE's own identity `CHG_IN_OI(t) == OI(t) - OI(t-1)` reconciles 99.69% (2000-09), 99.97% (2010-19),
-      100.0000% (2020-24 and UDiFF) and 100% across the legacy->UDiFF cutover; all 30 weekend sessions reconcile with both
-      neighbours (60 pairs, 99.97%). (Superseded: both F&O ingesters were caught up to 2026-09-24 after its 19:00 IST publication; the newest file is now
-      2026-09-24.) When this was first written the newest day on disk was 2026-09-23: 2026-09-24 was requested before it was
-      published (its manifest record says `holiday`, provisional); rerun `python data/ingest_fno_bhavcopy.py --days 3`.
+      weekend sessions**), 2000-06-12 -> **2026-09-30** (caught up today: `--days 7` after the Stage 3 equity refresh
+      extended the calendar past F&O's old 2026-09-24 ceiling), 183.6M+ contract rows, 2.4 GB; disk == manifest `ok`
+      days and every row count matches. NSE's own identity `CHG_IN_OI(t) == OI(t) - OI(t-1)` reconciles 99.69% (2000-09),
+      99.97% (2010-19), 100.0000% (2020-24 and UDiFF) and 100% across the legacy->UDiFF cutover; all weekend sessions
+      reconcile with both neighbours (60 pairs, 99.97%).
     - *Weekend sessions:* the weekday-only crawl (Stage 3's, inherited) misses them and breaks OI continuity (62.8% on
       2025-02-03). `--weekends` on both F&O ingesters found 30 (24 Sat, 6 Sun, earliest 2003-03-22), 20 of them unknown
-      before. The Stage 3 equity/delivery crawls are still weekday-only and NSE serving their weekend files is unprobed.
+      before. **Resolved 2026-09-30:** the Stage 3 equity/delivery/index crawls now probe weekends too (see the Stage 3
+      revisit note above) — every one of these 30 dates has a genuine equity counterpart; delivery/indices show no
+      counterpart only where their archives start later (2019-09-30, 2012-02-21 respectively), never an unexplained gap.
     - *Documented absences* (each in `scripts/verify_stage10_fno.py` with its evidence; an undocumented one fails
       verification): **2003-10-01**, 19 archive-gap days (NSE 404s on every URL form though equity traded: 2000-07/08/09/10
-      dates, 2013-10-09, 2021-03-30), and 32 days ingested after a lossless repair recorded in the manifest `format_era`.
+      dates, 2013-10-09, 2021-03-30), **2012-11-11** (added 2026-09-30: 14 EQ rows, all gold/commodity ETFs, not a real
+      broad-market session — F&O's own manifest already recorded it `holiday`), and 32 days ingested after a lossless
+      repair recorded in the manifest `format_era`.
     - *2003-10-01 is the one failed bhavcopy day and is still excluded.* 57 contracts appear twice in the raw file (an
       all-zero row, then a priced row): 48 Dec-2003 futures and 9 with 2004 expiries. The other 4,499 rows are clean. The
       day falls in the training window of the folds testing 2005-2008 (4-year rolling window, plan §7.2; the fold
@@ -117,8 +150,10 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
       57/57 against both neighbouring sessions (it cannot discriminate where OI is 0 throughout, ~53 of 57) and settle
       within -5.5%/+8.6% of adjacent sessions; the zero copies claim settle 0 on contracts that settled at
       42.8-17,515.9 the day before.
-    - *Ban list* (`data/ingest_fno_ban.py` -> `data/raw/fno_ban/`): 4,639 lists (4,618 weekday + 21 weekend),
-      2008-01-01 -> 2026-09-24; 1,339 NIL days (stored as one null-symbol row: published-and-empty, not "no file"),
+    - *Ban list* (`data/ingest_fno_ban.py` -> `data/raw/fno_ban/`): 4,643 lists (4,622 weekday + 21 weekend),
+      2008-01-01 -> **2026-09-30** (caught up today alongside bhavcopy — this archive is separate and was missed in the
+      first refresh pass, then caught with `--days 7` once the combined checkpoint's F&O ban-coverage check caught it);
+      1,339 NIL days (stored as one null-symbol row: published-and-empty, not "no file"),
       12,108 (day, symbol) bans, 197 symbols; disk == manifest. **Days with NO usable list, all real sessions: consumers
       (Stage 11 gates) must treat them as "unavailable", never "nobody banned":** 2008-11-28 (404; the ban archive is off
       by one around the 2008-11-27 closure), 2014-02-19 and 2014-08-25 (NSE's URL serves the next day's list; the header-
@@ -130,45 +165,49 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
       files newer than the last flush are NOT orphans while a crawl runs. **Never delete "unrecorded" files while any
       ingest process is alive** (two sessions share this repo; check the process list and `ListAgents` first).
     - No F&O feature block: `features/blocks/` holds only `delivery.py`; `data/processed/features/` holds only `delivery/`.
-  - **Flows sub-block: built (2026-09-24); `python -m scripts.verify_stage10_flows` now FAILS (checked 2026-09-30, see
-    below) on publication timing specifically — every other check, including all 9 injected-bug checks, still passes.**
-    `features/blocks/flows.py` ->
-    `data/processed/features/flows/{fii_flows,dii_flows}.parquet`. **FII** is deep: NSDL daily FPI equity net, **1999-01-01 ->**
-    (`data/ingest_nsdl_fpi.py`, 333 monthly files), 1999-2026 checked against NSDL's own monthly and quarterly totals and by an
-    exact audit of every session with no figure (`data/audit_nsdl_absent_sessions.py`: 143 of 144 are days NSDL did not report;
-    the 144th, 2000-02-28, is a quarantined duplicate). Rolling sums cover the last 5/20 REPORTED days. **DII is not usable yet:**
-    NSE serves only the latest day, so it is forward capture only (`data/ingest_fii_dii.py`, timestamped); 1 populated row of
-    7,919; 2026-09-22 and 09-23 were never captured and are lost; **no scheduled capture exists**, so every uncaptured day is lost.
-    Independent rebuild, NSDL cross-checks and all 9 injected-bug checks pass; the block places a value on the next session
-    (safe, one session conservative). **Publication timing — known, dated gap, confirmed 2026-09-30, cannot be backfilled:**
-    `data/publication_monitor.py` is not a daemon (it polls every 3 min until every source is seen or a hard deadline
-    passes, then exits — meant to be invoked once per evening, per target date). Its `nsdl_cash` poll for target
-    2026-09-25 died from a `ConnectionError` to `www.fpi.nsdl.co.in` around 21:17 IST 2026-09-24 (same ~46h outage this
-    section already documented, not a new one) and never polled again, leaving one negative record
-    (`first_seen_ist: null` in `data/raw/_publication/first_seen.jsonl`). Confirmed today: nothing is running or
+  - **Flows sub-block: built (2026-09-24), rebuilt against the refreshed calendar (2026-09-30).**
+    `python -m scripts.verify_stage10_flows` FAILS on publication timing specifically — every other check,
+    including all 9 injected-bug checks and the FII completeness audit, passes. `features/blocks/flows.py` ->
+    `data/processed/features/flows/{fii_flows,dii_flows}.parquet` (7,935 sessions, up from 7,919 — the Stage 3
+    weekend backfill and refresh extended the calendar). **FII** is deep: NSDL daily FPI equity net, **1999-01-01 ->**
+    (`data/ingest_nsdl_fpi.py`, 333 monthly files), checked against NSDL's own monthly and quarterly totals and by an
+    exact audit of every session with no figure (`data/audit_nsdl_absent_sessions.py`, **re-run 2026-09-30** to cover
+    the newly-added weekend sessions: 150 of 151 are days NSDL did not report, up from 144 of 145 — the 151st,
+    2000-02-28, is the same already-documented quarantined duplicate). Rolling sums cover the last 5/20 REPORTED days.
+    **DII is not usable yet:** NSE serves only the latest day, so it is forward capture only (`data/ingest_fii_dii.py`,
+    timestamped); 2 populated rows of 7,935; **no scheduled capture exists**, so every uncaptured day is lost.
+    Independent rebuild, NSDL cross-checks and all 9 injected-bug checks pass; the block places a value on the next
+    session (safe, one session conservative). **Publication timing — known, dated gap, cannot be backfilled, unchanged
+    by today's rebuild:** `data/publication_monitor.py` is not a daemon (it polls every 3 min until every source is
+    seen or a hard deadline passes, then exits — meant to be invoked once per evening, per target date). Its
+    `nsdl_cash` poll for target 2026-09-25 died from a `ConnectionError` to `www.fpi.nsdl.co.in` around 21:17 IST
+    2026-09-24 (same ~46h outage this section already documented, not a new one) and never polled again, leaving one
+    negative record (`first_seen_ist: null` in `data/raw/_publication/first_seen.jsonl`). Nothing is running or
     scheduled to run the monitor. This is NOT fixable by "restarting" it: the tool measures live, in real time, when a
-    source first shows a target day's data — running it now for 2026-09-25 would only prove the figure is visible as of
-    today, not that it was visible before the deadline that already passed. A valid fresh measurement needs a NEW target
-    date and a live run of up to ~24h; not attempted (out of scope this session). Until then the verifier correctly
-    FAILS this one check rather than pass an unproven timing claim — every other flows check still passes, and this is
-    the sole reason `scripts/verify_stage10.py` reports 4/5, not 5/5. **Separately:** the FII data itself is also only
-    current through 2026-09-24, but this is not a new or flows-specific stall — it is exactly in sync with the global
-    session calendar (`data/trading_calendar.py`), itself capped at 2026-09-24 because Stage 3 equity bhavcopy / Stage 4
-    prices have not been re-ingested since **2026-09-04** (only F&O bhavcopy, at 2026-09-24, carries the union calendar
-    that far); relative to the calendar it is actually built against, `fii_flows.parquet` is fully current. Facts:
-    `data/raw/DATA_NOTES.md` §12.
-  - **Breadth sub-block: built and verified (2026-09-24).** `features/blocks/breadth.py` ->
+    source first shows a target day's data — running it now for 2026-09-25 would only prove the figure is visible as
+    of today, not that it was visible before the deadline that already passed. A valid fresh measurement needs a NEW
+    target date and a live run of up to ~24h; not attempted (out of scope this session). Until then the verifier
+    correctly FAILS this one check rather than pass an unproven timing claim — this is the sole reason
+    `scripts/verify_stage10.py` reports 4/5, not 5/5. The FII data itself is current through **2026-09-29**, in sync
+    with the refreshed global session calendar (`data/trading_calendar.py`). Facts: `data/raw/DATA_NOTES.md` §12.
+  - **Breadth sub-block: built and verified (2026-09-24); NOT rebuilt in today's (2026-09-30) Stage 3 cascade —
+    now stale relative to the refreshed data, a known gap, not yet fixed.** `features/blocks/breadth.py` ->
     `data/processed/features/breadth/universe_breadth.parquet`: `universe_pct_above_200dma` = % of Stage 5 point-in-time universe
     members above their own 200-row SMA (NOT % of Nifty 500: no historical constituent lists exist, and the scorer's expected
-    `nifty500_pct_above_200dma` input is a proxy, not this quantity). 7,590 of 7,919 sessions have data; the 329 missing are
-    285 warm-up (pre-1996), 30 weekend sessions, 2020-07-13, and **13 sessions after 2026-09-04 because Stage 3's equity bhavcopy
-    and Stage 4 prices end 2026-09-04** (the F&O and NSDL data run to 09-24). `python -m scripts.verify_stage10_breadth` passes.
+    `nifty500_pct_above_200dma` input is a proxy, not this quantity). As of 2026-09-24: 7,590 of 7,919 sessions have data; the
+    329 missing were 285 warm-up (pre-1996), 30 weekend sessions, 2020-07-13, and 13 sessions after the old 2026-09-04 ceiling.
+    Every one of those specific gaps (weekend sessions, 2020-07-13, the 2026-09-04 ceiling) was fixed upstream by today's Stage 3
+    cleanup, but breadth itself was not in this cascade's explicit scope and was not re-run, so its output still reflects the
+    pre-refresh state. `python -m scripts.verify_stage10_breadth` was not re-run today either; rebuilding this block and
+    re-verifying is the next concrete step before breadth can be called current.
   - **Circuits sub-block: complete and verified (2026-09-30).** `data/raw/sec_list/`: 1,674 files, 2019-12-30 -> 2026-09-24
     (weekday + weekend). `data/raw/price_band_hits/`: the crawl that had stalled at 1,339/~4,364 days was resumed and finished
     — 4,147 weekday files (2010-01-04 -> 2026-09-30, only 241 dates genuinely absent, all documented holidays/gaps) plus a
     completed `--weekends` pass (20 real weekend sessions found; 1,726 other weekend dates checked and confirmed non-trading).
-    `features/blocks/circuits.py` -> `data/processed/features/circuits/` (2,333 files, one per universe symbol, 6,923,017 rows,
-    row-aligned 1:1 with Stage 4 price rows — same shape as delivery/pledging). Two independent sub-blocks, each with its own
+    `features/blocks/circuits.py` -> `data/processed/features/circuits/` (2,333 files, one per universe symbol, rebuilt
+    2026-09-30 against the refreshed Stage 3/4 data: 6,978,660 rows, up from 6,923,017, row-aligned 1:1 with Stage 4 price
+    rows — same shape as delivery/pledging; the `RATNAVEER` orphan-file fix described in the delivery bullet above applies
+    here too, same shared helper). Two independent sub-blocks, each with its own
     missing flag: BAND (`price_band_pct`, `is_no_band`, `band_is_inferred`) reads the `sec_list` file dated the PREVIOUS
     session, never same-day; HITS (`hit_upper_circuit`, `hit_lower_circuit`) reads the `bh` file dated the session itself,
     NaN + flagged (never 0) on a session with no published list. `python -m scripts.verify_stage10_circuits` PASSES: universe
@@ -185,35 +224,45 @@ as `docs/LYNX-v4-Technical-Architecture-Plan.txt` §10).
     anywhere in the real output. Facts: DATA_NOTES §13 (still not written).
   - **Pledging sub-block: complete and verified (2026-09-30).** `data/ingest_shp_pledge.py` (NSE shareholding-pattern XBRL,
     promoter encumbrance from share counts; two fact families across three schema years; `corporate-pledgedata` is NOT used: it
-    is a daily-regenerated snapshot). The crawl that had stalled at 142/~1,129 symbols finished: `data/raw/shp/` holds all
-    **1,129/1,129** target symbols (`data.ingest_shp_pledge.universe_symbols_by_priority()`), 21,381 filing rows, zero gaps,
-    zero lingering network-error `PARSE_ERROR` rows. The 433 remaining `PARSE_ERROR` rows (2.0%) are permanent, categorized NSE
-    data-quality facts, not crawl failures: 191 XBRL-period/master-list disagreements, 167 filings with no XBRL link at all, 75
+    is a daily-regenerated snapshot). The crawl that had stalled at 142/~1,129 symbols finished: `data/raw/shp/` holds
+    **1,129** filing files; the priority target LIST (`data.ingest_shp_pledge.universe_symbols_by_priority()`, derived from
+    Stage 5) now computes **1,128** after today's Stage 5 rebuild shifted universe composition slightly — the crawl was not
+    re-run to match, so disk has one more file than the current target list strictly needs; the checkpoint still passes since
+    it only requires every TARGET to have a file, never the reverse. 21,381 filing rows, zero gaps, zero lingering
+    network-error `PARSE_ERROR` rows. The remaining `PARSE_ERROR` rows are permanent, categorized NSE
+    data-quality facts, not crawl failures: XBRL-period/master-list disagreements, filings with no XBRL link at all, and
     dead 404 links. `features/blocks/pledging.py` -> `data/processed/features/pledging/` (2,333 files, one per universe symbol,
-    row-aligned 1:1 with Stage 4 price rows; symbols outside the 1,129-symbol SHP crawl target are all-missing by construction,
-    not a bug). `pledged_pct_of_promoter` is keyed on the filing's BROADCAST timestamp through the 19:00 IST nightly cutoff
-    (`data/publication.py`), never the quarter it describes, its submission date or a creation date; a revision replaces its own
-    period's slot without displacing a newer quarter. History starts with the Sep-2021 filings, batch-broadcast 2022-01-06/07.
+    rebuilt 2026-09-30 against the refreshed Stage 3/4 data: 6,978,660 rows, up from 6,923,017, row-aligned 1:1 with Stage 4
+    price rows; symbols outside the SHP crawl target are all-missing by construction, not a bug; the `RATNAVEER` orphan-file
+    fix described in the delivery bullet above applies here too). `pledged_pct_of_promoter` is keyed on the filing's
+    BROADCAST timestamp through the 19:00 IST nightly cutoff (`data/publication.py`), never the quarter it describes, its
+    submission date or a creation date; a revision replaces its own period's slot without displacing a newer quarter. History
+    starts with the Sep-2021 filings, batch-broadcast 2022-01-06/07.
     `python -m scripts.verify_stage10_pledging` PASSES: crawl coverage; universe file coverage; structure; point-in-time
-    (existence of a same-period broadcast usable by each row's date — 0 violations across all 1,129 crawled symbols); an
-    independent plain-loop recompute of ratio/change/rising/age from the raw filings (0 violations); no-zero-fill (15,742 real
-    0% disclosures in the raw filings, 822,645 feature rows at exactly 0%, both survive unflagged); truncation; and 5
-    injected-bug checks (creation/period-date keying, zero-fill, stale carry-forward, a value off by 5pp, a cleared flag) that
-    all genuinely fire. Facts: DATA_NOTES §14 (still not written).
-  - **Stage 10 is NOT complete.** `python -m scripts.verify_stage10` runs the five sub-blocks this checkpoint covers
-    (delivery, F&O, flows, pledging, circuits) — **4 of 5 PASS (confirmed fresh 2026-09-30): delivery (45s), F&O (86s),
-    pledging (137s), circuits (111s). flows FAILS (8s)**, on the FII publication-timing check only (every other flows
-    check, all 9 injected-bug tests included, passes) — see the flows sub-block bullet above for the full, dated
-    diagnosis: the evidence is a known, un-backfillable gap (`data/publication_monitor.py` died mid-run for target
-    2026-09-25 and nothing restarts it), confirmed today to be pre-existing and untouched by this session's work
-    (nothing in `flows.py`, its verifier, or the monitor was edited). This is reported honestly as 4/5, not silently
-    rounded up to 5/5. Breadth has its own separate verifier, already passing (2026-09-24). What else remains before
-    Stage 10 as a whole is done: **the F&O feature block does not exist yet** (`features/blocks/` still has no F&O
-    module — only raw ingestion is built); **Stage 3 equity bhavcopy / Stage 4 prices have not been re-ingested since
-    2026-09-04**, capping every Stage 10 sub-block's current data at that date (F&O bhavcopy alone reaches 2026-09-24);
-    DII flows remain forward-capture only (one populated row); a fresh, valid publication-timing measurement is still
-    needed. DATA_NOTES §13/§14 (circuits/pledging source facts) are still not written. The repo is now under git (first
-    commit 2026-09-30).
+    (existence of a same-period broadcast usable by each row's date — 0 violations across every crawled symbol); an
+    independent plain-loop recompute of ratio/change/rising/age from the raw filings (0 violations); no-zero-fill; truncation;
+    and 5 injected-bug checks (creation/period-date keying, zero-fill, stale carry-forward, a value off by 5pp, a cleared flag)
+    that all genuinely fire. Facts: DATA_NOTES §14 (still not written).
+  - **Stage 10 is NOT complete, but is now on its most current, most rigorously verified footing yet (2026-09-30).**
+    `python -m scripts.verify_stage10` runs the five sub-blocks this checkpoint covers (delivery, F&O, flows, pledging,
+    circuits) — **4 of 5 PASS: delivery, F&O, pledging, circuits. flows FAILS** on the FII publication-timing check
+    only (every other flows check, all 9 injected-bug tests included, passes) — see the flows sub-block bullet above
+    for the full, dated diagnosis: the evidence is a known, un-backfillable gap (`data/publication_monitor.py` died
+    mid-run for target 2026-09-25 and nothing restarts it), pre-existing and untouched by any of today's work (nothing
+    in `flows.py`, its verifier, or the monitor was edited). Reported honestly as 4/5, not rounded up. **What changed
+    today to get here:** the Stage 3 cleanup cascade (weekend backfill across equity/delivery/indices, the
+    2020-07-13 date-parsing fix, the two recovered delivery days, refreshing equity/delivery/F&O-bhavcopy/F&O-ban to
+    2026-09-29/30) forced a full re-verification of everything downstream — Stages 4 and 5 were rebuilt clean, Stage 8
+    re-verified, Stage 9 fully recomputed (catching and fixing a real orphaned-symbol bug in Postgres), and all four
+    buildable Stage 10 sub-blocks rebuilt (catching and fixing the *same* orphaned-symbol bug at the filesystem layer,
+    shared across delivery/pledging/circuits via one helper). Stage 7's momentum baseline was re-run end to end:
+    **GATE VERDICT is still GO** (net annualized spread now 4.69%, up from 4.60%, 7,749 rebalances 2005-2025) — the
+    Stage 3 fixes did not change the verdict. What still remains before Stage 10 as a whole is done: **the F&O
+    feature block does not exist yet** (`features/blocks/` still has no F&O module — only raw ingestion is built,
+    now current); **breadth was not rebuilt in today's cascade** and is stale relative to the refreshed data (its own
+    bullet above); DII flows remain forward-capture only; a fresh, valid publication-timing measurement is still
+    needed. DATA_NOTES §13/§14 (circuits/pledging source facts) are still not written. The repo is under git (first
+    commit 2026-09-30, several more since covering today's Stage 3 cleanup).
 - **Stages 11–26: not started.**
 
 ## Data storage — where things actually live
@@ -291,12 +340,28 @@ scripts/
 tests/
   test_indicators.py, test_scorer.py, test_delivery_features.py, test_fno_ingest.py, test_fno_ban.py, test_ingest_common.py
   test_pledging_block.py, test_circuits_block.py, test_circuit_inference.py, test_ingest_shp_pledge.py
+  test_ingest_bhavcopy.py, test_ingest_bhavdata.py, test_ingest_indices.py   # Stage 3 (added 2026-09-30; zero coverage existed before)
+  test_features_common.py                                                    # features/blocks/common.py's shared helpers (added 2026-09-30)
+  fixtures/bhavdata/sec_bhavdata_full_08082022.xlsx   # real captured response, the 2022-08-08 XLSX-disguised-as-CSV day
   invariants/           # test_delivery_row_date.py, test_config_database_url.py, test_fno_format_equivalence.py,
                          # test_pledging_invariants.py, test_circuits_invariants.py, ...
 data/
-  ingest_common.py, ingest_bhavcopy.py, ingest_bhavdata.py, ...   # Stage 3 ingesters
+  ingest_common.py, ingest_bhavcopy.py, ingest_bhavdata.py, ingest_indices.py, ...   # Stage 3 ingesters (all three take --weekends
+                                                                                       # since 2026-09-30; indices had no CLI before that)
+  audit_nsdl_absent_sessions.py   # re-run whenever a new session with no NSDL figure appears (verifier names any unaudited one)
   ingest_fno_bhavcopy.py, ingest_fno_ban.py                       # Stage 10 F&O ingesters (--weekends for weekend sessions)
   ingest_shp_pledge.py, ingest_sec_list.py, ingest_price_band_hits.py   # Stage 10 pledging/circuits ingesters (--weekends where noted)
   raw/                  # bhavcopy, fno_bhavcopy, fno_ban, delivery, shp, sec_list, price_band_hits, announcements, _manifests/, DATA_NOTES.md
   processed/             # corporate_actions.parquet, pit_features.parquet, checkpoints, processed/features/{delivery,flows,breadth,pledging,circuits}/
 ```
+
+## Orphaned per-symbol output (read before touching a `--no-resume` rebuild)
+
+A `--no-resume` rebuild of any per-symbol pipeline (Stage 9 indicators, Stage 10 delivery/pledging/circuits) only
+overwrites rows/files for symbols in the CURRENT universe — it never deletes one for a symbol that fell OUT (a Stage 5
+rebuild with corrected point-in-time data can legitimately drop a symbol from every year's top-700; found 2026-09-30:
+`RATNAVEER`). Two shared prunes exist and are called automatically at the start of each pipeline —
+`signals.indicators.prune_orphaned_symbols` (Postgres) and `features.blocks.common.prune_orphaned_symbol_files`
+(per-symbol Parquet directories, used by delivery/pledging/circuits). If a checkpoint ever reports an unexpected
+`extra=[...]` symbol again after a universe rebuild, this is the first thing to check — it means a pipeline wrote its
+rebuild without going through these.

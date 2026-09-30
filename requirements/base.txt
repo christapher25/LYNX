@@ -4,6 +4,7 @@ pyarrow
 psycopg2-binary
 python-dotenv
 requests
+openpyxl  # sec_bhavdata_full is served as a genuine XLSX file for one known day, 2022-08-08 (data/ingest_bhavdata.py)
 # Imported by code the CI invariant suite (tests/invariants/) exercises. Missing from this file until 2026-09-24, which
 # made `pytest tests/invariants/` fail at collection in a clean environment (verified: 2 collection errors).
 loguru

@@ -16,6 +16,7 @@ Usage
     python data/ingest_bhavdata.py                     # full backfill
     python data/ingest_bhavdata.py --start 2024-01-01  # from a date
     python data/ingest_bhavdata.py --days 30           # last 30 days
+    python data/ingest_bhavdata.py --weekends          # Saturday/Sunday special sessions
 """
 
 from __future__ import annotations
@@ -23,11 +24,14 @@ from __future__ import annotations
 import argparse
 import io
 import sys
+import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
+from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -61,6 +65,28 @@ MISSING_SENTINELS = {"-", "", "NA", "N/A", "nan", "None"}
 
 MANIFEST_PATH = PROJECT_ROOT / "data" / "raw" / "_manifests" / "bhavdata.jsonl"
 LOG_DIR = PROJECT_ROOT / "logs"
+
+# On 2024-02-19 exactly one row (of 2,646) had an impossible DELIV_QTY > VOLUME. Above this share of rows,
+# treat it as a parser/format problem (fail loudly) rather than a few bad source data points (quarantine them).
+DELIV_QUARANTINE_MAX_SHARE = 0.02
+
+
+# ─────────────────────────────────────────────────────────────────
+# Fetch-content dispatch — plain CSV, or the one known XLSX day
+# ─────────────────────────────────────────────────────────────────
+
+def read_bhavdata_content(content: bytes) -> pd.DataFrame:
+    """
+    NSE almost always serves this endpoint as plain CSV text. On 2022-08-08 it served a genuine XLSX file (a
+    ZIP container with real OOXML spreadsheet parts) at the same .csv URL — confirmed by fetching the real
+    file (see tests/fixtures/bhavdata/sec_bhavdata_full_08082022.xlsx): decoding it as text and handing it to
+    the CSV tokenizer produced "Expected 1 fields in line 5, saw 2" (data/raw/_manifests/bhavdata.jsonl), not
+    a parser bug so much as the wrong reader entirely. Detected by the ZIP magic bytes, not the URL or
+    Content-Type, since neither changed for this file.
+    """
+    if zipfile.is_zipfile(io.BytesIO(content)):
+        return pd.read_excel(io.BytesIO(content), engine="openpyxl")
+    return pd.read_csv(io.StringIO(content.decode("utf-8", errors="replace")), low_memory=False)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -153,14 +179,25 @@ def validate(df: pd.DataFrame, trade_date: date) -> pd.DataFrame:
                 f"(min={delivered.min()}, max={delivered.max()})"
             )
 
-    # Delivered quantity cannot exceed traded quantity.
+    # Delivered quantity cannot exceed traded quantity. A single impossible row (2024-02-19: one non-EQ
+    # symbol, WTICAB) is a genuine bad data point on NSE's side, not a parser fault, and must not cost the
+    # whole file: its delivery fields are quarantined (NaN, never guessed), everything else about that row —
+    # and every other row — is kept. A LARGE share impossible is a different story: that looks like a real
+    # parser/format problem (wrong columns, a shifted field), and must still fail loudly rather than quarantine
+    # away the evidence (DATA_NOTES.md §11).
     both = df[["DELIV_QTY", "VOLUME"]].dropna()
     if not both.empty:
         impossible = both[both["DELIV_QTY"] > both["VOLUME"]]
         if not impossible.empty:
-            raise ValueError(
-                f"{len(impossible)} rows have DELIV_QTY > VOLUME — impossible"
-            )
+            share = len(impossible) / len(both)
+            if share > DELIV_QUARANTINE_MAX_SHARE:
+                raise ValueError(
+                    f"{len(impossible)} rows ({share:.1%}) have DELIV_QTY > VOLUME — impossible"
+                )
+            symbols = df.loc[impossible.index, "SYMBOL"].tolist()
+            logger.warning(f"{trade_date}: quarantining {len(impossible)} row(s) with impossible "
+                            f"DELIV_QTY > VOLUME (delivery fields only, not the file): {symbols[:10]}")
+            df.loc[impossible.index, ["DELIV_QTY", "DELIV_PER"]] = np.nan
 
     # A total absence of delivery data means the parser broke, not that
     # the market delivered nothing.
@@ -194,7 +231,7 @@ def fetch_day(
     if nbytes < 1000:
         return None, "standard", nbytes             # placeholder/empty file
 
-    raw = pd.read_csv(io.StringIO(resp.text), low_memory=False)
+    raw = read_bhavdata_content(resp.content)
     parsed = parse_bhavdata(raw)
     return validate(parsed, trade_date), "standard", nbytes
 
@@ -212,6 +249,7 @@ def main() -> None:
     ap.add_argument("--days", type=int, help="fetch only the last N days")
     ap.add_argument("--delay", type=float, default=0.4,
                     help="seconds between requests (default 0.4)")
+    ap.add_argument("--weekends", action="store_true", help="request Saturdays and Sundays only (special sessions)")
     args = ap.parse_args()
 
     end = date.fromisoformat(args.end) if args.end else date.today()
@@ -234,6 +272,7 @@ def main() -> None:
         manifest_path=MANIFEST_PATH,
         log_dir=LOG_DIR,
         request_delay=args.delay,
+        days="weekends" if args.weekends else "weekdays",
     )
 
 

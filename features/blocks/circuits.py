@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import ADJUSTED_PRICES_DIR, CIRCUIT_FEATURES_CHECKPOINT, CIRCUIT_FEATURES_DIR, PRICE_BAND_HITS_DIR, SEC_LIST_DIR
 from data.trading_calendar import trading_sessions
-from features.blocks.common import validated_sessions
+from features.blocks.common import prune_orphaned_symbol_files, validated_sessions
 
 CIRCUIT_SERIES = "EQ"                # Stage 4 (adjust_prices.py) keeps SERIES == "EQ" only
 BAND_COLUMNS = ["price_band_pct", "is_no_band", "band_is_inferred"]
@@ -155,6 +155,7 @@ def run_circuits_pipeline(resume: bool = True, inferred_by_symbol: dict[str, pd.
 
     sessions = trading_sessions()
     symbols = list_universe_symbols()
+    prune_orphaned_symbol_files(CIRCUIT_FEATURES_DIR, symbols)
     all_bands = load_band_files()
     all_hits, hit_days = load_hit_files()
     bands_by, hits_by = ({s: g for s, g in all_bands.groupby("SYMBOL", sort=False)}, {s: g for s, g in all_hits.groupby("SYMBOL", sort=False)})

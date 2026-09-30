@@ -19,13 +19,21 @@ which meant every single day before late 2015 failed ingestion. Fixed
 two ways: names are normalized to a canonical form on parse, and the
 validation no longer hard-fails when VIX is legitimately absent from
 early history — that's a real historical fact, not a parser error.
+
+Usage
+-----
+    python data/ingest_indices.py                     # full backfill
+    python data/ingest_indices.py --start 2020-01-01   # from a date
+    python data/ingest_indices.py --days 30            # last 30 days
+    python data/ingest_indices.py --weekends           # Saturday/Sunday special sessions
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -181,15 +189,33 @@ def fetch_day(
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Ingest NSE's daily index close file (NIFTY/BANK/VIX and others).")
+    ap.add_argument("--start", type=str, help="start date YYYY-MM-DD")
+    ap.add_argument("--end", type=str, help="end date YYYY-MM-DD")
+    ap.add_argument("--days", type=int, help="fetch only the last N days")
+    ap.add_argument("--delay", type=float, default=0.4, help="seconds between requests (default 0.4)")
+    ap.add_argument("--weekends", action="store_true", help="request Saturdays and Sundays only (special sessions)")
+    args = ap.parse_args()
+
+    end = date.fromisoformat(args.end) if args.end else date.today()
+    if args.days:
+        start = end - timedelta(days=args.days)
+    elif args.start:
+        start = date.fromisoformat(args.start)
+    else:
+        start = FIRST_AVAILABLE
+    start = max(start, FIRST_AVAILABLE)
+
     run_ingestion(
         name="indices",
-        start=FIRST_AVAILABLE,
-        end=date.today(),
+        start=start,
+        end=end,
         output_dir=OUTPUT_DIR,
         fetch_fn=fetch_day,
         manifest_path=MANIFEST_PATH,
         log_dir=LOG_DIR,
-        request_delay=0.4,
+        request_delay=args.delay,
+        days="weekends" if args.weekends else "weekdays",
     )
 
 

@@ -71,6 +71,7 @@ from config import (
     DELIVERY_FEATURES_DIR,
 )
 from data.ingest_common import write_parquet_atomic
+from features.blocks.common import prune_orphaned_symbol_files
 from signals.indicators import list_universe_symbols
 
 DELIVERY_SERIES = "EQ"                # Stage 4 (adjust_prices.py) keeps SERIES == "EQ" only
@@ -292,6 +293,7 @@ def run_delivery_pipeline(resume: bool = True) -> dict:
     (a resumed run reuses symbols already written from the older inputs).
     """
     symbols = list_universe_symbols()
+    prune_orphaned_symbol_files(DELIVERY_FEATURES_DIR, symbols)
     delivery = load_delivery()
     by_symbol = {s: g for s, g in delivery.groupby("symbol", sort=False)}
     completed = _load_checkpoint() if resume else set()

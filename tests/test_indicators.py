@@ -12,11 +12,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from unittest.mock import MagicMock
+
 from signals.indicators import (
     INDICATOR_COLUMNS,
+    INDICATORS_TABLE,
     MIN_ROWS_REQUIRED,
     compute_indicators,
     prepare_ohlcv,
+    prune_orphaned_symbols,
 )
 
 
@@ -196,3 +200,46 @@ class TestRowCountPreserved:
         out = compute_indicators(df)
         assert len(out) == len(df)
         assert (out["date"] == df["date"]).all()
+
+
+class TestPruneOrphanedSymbols:
+    """
+    A symbol that legitimately falls out of the universe (e.g. a Stage 5 rebuild with corrected
+    point-in-time data shifts trailing-turnover rankings enough to drop it from every year's top-700)
+    must not leave its last-computed indicator rows sitting in Postgres forever with no signal they are
+    stale. Found 2026-09-30: RATNAVEER had 660 rows dated through the pre-refresh cutoff, orphaned by a
+    Stage 5 rebuild that added weekend sessions and the 2020-07-13 fix upstream -- the checkpoint's own
+    "indicator rows == OHLCV rows for every universe symbol" check caught it as an unexpected "extra"
+    symbol, and signals/indicators.py had no step that would ever clean it up on its own.
+    """
+
+    def _mock_conn(self, db_symbols: list[str]):
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [(s,) for s in db_symbols]
+        conn.cursor.return_value.__enter__.return_value = cur
+        conn.__enter__.return_value = conn
+        return conn, cur
+
+    def test_a_symbol_no_longer_in_the_universe_is_deleted(self):
+        conn, cur = self._mock_conn(["RELIANCE", "TCS", "RATNAVEER"])
+        pruned = prune_orphaned_symbols(conn, ["RELIANCE", "TCS"])
+        assert pruned == ["RATNAVEER"]
+        cur.execute.assert_any_call(f"DELETE FROM {INDICATORS_TABLE} WHERE symbol = %s", ("RATNAVEER",))
+
+    def test_current_universe_symbols_are_never_deleted(self):
+        conn, cur = self._mock_conn(["RELIANCE", "TCS"])
+        prune_orphaned_symbols(conn, ["RELIANCE", "TCS"])
+        deleted = [call.args[1][0] for call in cur.execute.call_args_list if "DELETE" in call.args[0]]
+        assert deleted == []
+
+    def test_nothing_orphaned_is_a_no_op(self):
+        conn, cur = self._mock_conn(["RELIANCE", "TCS"])
+        pruned = prune_orphaned_symbols(conn, ["RELIANCE", "TCS", "INFY"])
+        assert pruned == []
+        assert not any("DELETE" in call.args[0] for call in cur.execute.call_args_list)
+
+    def test_multiple_orphans_are_all_deleted_and_returned_sorted(self):
+        conn, cur = self._mock_conn(["ZULU", "RELIANCE", "ALPHA"])
+        pruned = prune_orphaned_symbols(conn, ["RELIANCE"])
+        assert pruned == ["ALPHA", "ZULU"]

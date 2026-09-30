@@ -20,6 +20,7 @@ Usage
     python data/ingest_bhavcopy.py                     # full backfill
     python data/ingest_bhavcopy.py --start 2020-01-01  # from a date
     python data/ingest_bhavcopy.py --days 30           # last 30 days
+    python data/ingest_bhavcopy.py --weekends          # Saturday/Sunday special sessions
 """
 
 from __future__ import annotations
@@ -87,6 +88,24 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _legacy_dates(series: pd.Series) -> pd.Series:
+    """
+    Dates are normally '03-JUN-2024'. On 2020-07-13 NSE wrote the whole file's TIMESTAMP as '13-Jul-20'
+    (two-digit year), and the strict four-digit parse turned all 2,001 rows to NaT, losing the day
+    ("2001 rows failed date parsing", data/raw/_manifests/bhavcopy.jsonl; see DATA_NOTES.md §11). Rows that
+    fail the primary parse get one retry with a two-digit year; anything still unparseable stays NaT and
+    fails validate(), which also checks the parsed date against the requested one, so the fallback cannot
+    file a row under the wrong day. Mirrors data/ingest_fno_bhavcopy.py's `_legacy_dates`, written for the
+    same day in the F&O archive.
+    """
+    text = series.astype(str).str.strip()
+    parsed = pd.to_datetime(text, format="%d-%b-%Y", errors="coerce")
+    retry = parsed.isna()
+    if retry.any():
+        parsed[retry] = pd.to_datetime(text[retry], format="%d-%b-%y", errors="coerce")
+    return parsed
+
+
 def parse_legacy(df: pd.DataFrame) -> pd.DataFrame:
     """
     Eras 1 and 2. Column count varies (12 or 14); missing optional
@@ -97,11 +116,7 @@ def parse_legacy(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({
         "SYMBOL": df["SYMBOL"].astype(str).str.strip(),
         "SERIES": df["SERIES"].astype(str).str.strip(),
-        "DATE": pd.to_datetime(
-            df["TIMESTAMP"].astype(str).str.strip(),
-            format="%d-%b-%Y",
-            errors="coerce",
-        ),
+        "DATE": _legacy_dates(df["TIMESTAMP"]),
         "OPEN": df["OPEN"],
         "HIGH": df["HIGH"],
         "LOW": df["LOW"],
@@ -234,6 +249,7 @@ def main() -> None:
     ap.add_argument("--days", type=int, help="fetch only the last N days")
     ap.add_argument("--delay", type=float, default=0.4,
                     help="seconds between requests (default 0.4)")
+    ap.add_argument("--weekends", action="store_true", help="request Saturdays and Sundays only (special sessions)")
     args = ap.parse_args()
 
     end = date.fromisoformat(args.end) if args.end else date.today()
@@ -256,6 +272,7 @@ def main() -> None:
         manifest_path=MANIFEST_PATH,
         log_dir=LOG_DIR,
         request_delay=args.delay,
+        days="weekends" if args.weekends else "weekdays",
     )
 
 

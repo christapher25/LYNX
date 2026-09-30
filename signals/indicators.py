@@ -290,6 +290,28 @@ def write_indicators(conn, symbol: str, indicators: pd.DataFrame) -> None:
         cur.copy_expert(f"COPY {INDICATORS_TABLE} ({columns}) FROM STDIN WITH (FORMAT csv, NULL '')", buf)
 
 
+def prune_orphaned_symbols(conn, symbols: list[str]) -> list[str]:
+    """
+    Delete indicator rows for any symbol no longer in the current universe. A symbol can legitimately fall
+    out of every year's top-700 turnover ranking when Stage 5 is rebuilt with corrected point-in-time data
+    (found 2026-09-30: a Stage 5 rebuild that added weekend sessions and fixed the 2020-07-13 parsing gap
+    upstream shifted RATNAVEER's trailing turnover just enough to drop it everywhere). Without this, its
+    LAST computed indicators — dated through whatever the archive covered at the time — sit in Postgres
+    forever with nothing marking them stale, which is exactly the silent-failure class this project exists
+    to avoid. Symbols are deleted individually (not a single NOT IN query) so this reads the same as, and
+    stays consistent with, write_indicators' own per-symbol delete.
+    """
+    with conn, conn.cursor() as cur:
+        cur.execute(f"SELECT DISTINCT symbol FROM {INDICATORS_TABLE}")
+        in_db = {row[0] for row in cur.fetchall()}
+        orphaned = sorted(in_db - set(symbols))
+        for symbol in orphaned:
+            cur.execute(f"DELETE FROM {INDICATORS_TABLE} WHERE symbol = %s", (symbol,))
+    if orphaned:
+        logger.warning(f"pruned {len(orphaned)} symbol(s) no longer in the universe: {orphaned[:10]}")
+    return orphaned
+
+
 def _load_checkpoint() -> set[str]:
     if INDICATORS_CHECKPOINT.exists():
         return set(json.loads(INDICATORS_CHECKPOINT.read_text())["completed_symbols"])
@@ -324,6 +346,7 @@ def run_indicators_pipeline(resume: bool = True) -> None:
     conn = get_db_connection()
     try:
         ensure_indicators_table(conn)
+        prune_orphaned_symbols(conn, symbols)
         for symbol in tqdm(remaining, desc="computing indicators"):
             try:
                 prices = load_adjusted_prices(symbol)

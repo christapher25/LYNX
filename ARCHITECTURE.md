@@ -83,7 +83,8 @@ Deliberately absent: Kafka, Kubernetes, vector-DB SaaS, feature-store SaaS.
 **Phase 1 — Data foundation** [DONE]
 3. Bhavcopy ingestion+backfill — 4. Corporate action engine — 5. Universe+PIT
 constituents — 6. Transaction cost model (do early) — 7. Momentum baseline
-GO/NO-GO gate (**GATE VERDICT = GO**, ~4.60% net annualized spread)
+GO/NO-GO gate (**GATE VERDICT = GO**, 4.69% net annualized spread — re-run 2026-09-30 against the refreshed
+Stage 3 data, verdict unchanged, was ~4.60%)
 
 **Phase 2 — Features** [Stages 8–9 done, Stage 10 in progress, 11–12 not started]
 8. Index+macro pipeline — 9. Technical indicators + deterministic scorer

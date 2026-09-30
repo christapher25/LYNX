@@ -60,11 +60,17 @@ KNOWN_SOURCE_DEFECT_DAYS: dict[str, str] = {
 # Equity trading days for which NSE's F&O archive returns 404, though futures traded whenever cash did. Probed
 # 2026-09-24 against every reachable URL form (nsearchives, mixed-case month, UDiFF-style name; archives.nseindia.com
 # answers 403/404, www1 fails TLS): nothing serves them, so they are archive gaps, not ingestion failures.
+#
+# 2012-11-11 is a different kind of entry, found 2026-09-30 by the Stage 3 equity weekend backfill: it is a genuine
+# equity bhavcopy day (14 EQ rows) but NOT a normal market session -- every row is a gold/commodity ETF
+# (AXISGOLD, BSLGOLDETF, CRMFGETF, ...), not a broad-market listing, and the F&O archive's own manifest already
+# recorded it as "holiday" (a clean 404, not a fetch failure) before this was investigated. There was no derivatives
+# session to have a file for.
 KNOWN_ARCHIVE_GAP_DAYS: tuple[str, ...] = (
     "2000-07-03", "2000-07-04", "2000-07-05", "2000-07-06",
     "2000-08-01", "2000-08-02", "2000-08-03", "2000-08-04", "2000-08-07", "2000-08-08", "2000-08-09",
     "2000-09-04", "2000-09-05", "2000-09-06", "2000-09-07", "2000-09-08", "2000-10-09",
-    "2013-10-09", "2021-03-30",
+    "2012-11-11", "2013-10-09", "2021-03-30",
 )
 # Ban-list equivalents, EMPTY until each entry is investigated and recorded with its evidence (same rule as above: an
 # undocumented failed day fails verification).

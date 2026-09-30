@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config import ADJUSTED_PRICES_DIR, PLEDGING_FEATURES_CHECKPOINT, PLEDGING_FEATURES_DIR, SHP_DIR
 from data.publication import usable_from_series
 from data.trading_calendar import trading_sessions
-from features.blocks.common import validated_sessions
+from features.blocks.common import prune_orphaned_symbol_files, validated_sessions
 
 PLEDGING_COLUMNS = ["pledged_pct_of_promoter", "pledged_pct_chg", "pledge_rising", "pledging_age_days"]
 OUTPUT_COLUMNS = ["symbol", "date", *PLEDGING_COLUMNS, "source_period_end", "is_missing_pledging"]
@@ -174,6 +174,7 @@ def run_pledging_pipeline(resume: bool = True) -> dict:
 
     sessions = trading_sessions()
     symbols = list_universe_symbols()
+    prune_orphaned_symbol_files(PLEDGING_FEATURES_DIR, symbols)
     completed = _load_checkpoint() if resume else set()
     remaining = [s for s in symbols if s not in completed]
     logger.info(f"pledging pipeline: {len(symbols):,} symbols, {len(completed):,} done, {len(remaining):,} remaining")
