@@ -1,0 +1,2477 @@
+LYNX Architecture and Setup
+Documentation
+An AI decision-support system for NSE equities: PRISM encoders and the
+VANTA decision pipeline. Final architecture, version 6.0
+
+Final-year capstone, B.Tech Computer Science & Engineering (AI & ML), St. Thomas College of
+Engineering and Technology, APJ Abdul Kalam Technological University
+
+October 2026
+
+Document control
+1. Executive summary
+  1.1 Contributions, stated precisely
+2. Problem, goals and constraints
+ 2.1 The problem
+ 2.2 Goals
+ 2.3 Non-goals
+  2.4 Constraints that shape the design
+  2.5 Scope decision flagged for confirmation: horizons
+3. Users, tiers and what is published
+  3.1 What a user sees
+  3.2 Tiers
+4. System architecture
+  4.1 Nine layers
+ 4.2 The decision path, end to end
+ 4.3 The daily cycle
+ 4.4 What stays deterministic
+5. Data architecture
+  5.1 Sources
+  5.2 What was measured, not assumed
+ 5.3 Format and parser rules
+ 5.4 Storage and ingestion design
+ 5.5 Corporate actions, universe and point-in-time rules
+  5.6 The Indian transaction cost model
+6. Features, override gates and the deterministic scorer
+  6.1 Feature blocks
+  6.2 Override gates
+7. Language and knowledge layer
+  7.1 Why a structured extractor instead of FinBERT
+  7.2 The extractor
+  7.3 Knowledge graph
+  7.4 Hardware routing
+8. PRISM: the representation
+ 8.1 Cross-market self-supervised pretraining
+ 8.2 Heterogeneous temporal graph (R-GAT)
+ 8.3 Regime model
+  8.4 Why a small supervised head on a large encoder
+9. VANTA: the decision pipeline
+  9.0 The pipeline and its components
+ 9.1 Part A: NEL, net executable labels
+ 9.2 Part B: VN-ListNet, volatility-normalised listwise ranking
+ 9.3 Part C: RW-CS and FCC, the publish gate
+ 9.4 Part D: trade levels
+  9.5 Evidence so far, and how much to trust it
+10. Training and validation protocol
+  10.1 Four training stages per fold
+  10.2 Walk-forward discipline
+  10.3 Where compute helps and where it does not
+11. Evaluation
+ 11.1 Metrics
+
+  11.2 Baselines
+  11.3 Ablation suite
+  11.4 Era analysis and expected results, stated in advance
+  11.5 Milestone M1: the first real-data test of the new layer
+12. Invariants and the silent-failure catalogue
+  12.1 Rules that are never broken
+  12.2 Silent failures: bugs that look like success
+  12.3 VANTA and PRISM invariant tests N1 to N14
+13. Platform and delivery
+  13.1 Technology stack
+  13.2 API, web and mobile
+  13.3 Mobile delivery
+14. Environment and setup guide
+  14.1 Prerequisites
+  14.2 Repository layout (as it exists so far)
+  14.3 Bring-up steps
+  14.4 Continuous integration
+  14.5 Working conventions
+  14.6 Working with coding agents
+15. Build order and status
+  15.1 Build order
+  15.2 Status snapshot (20 October 2026)
+  15.3 Critical path
+  15.4 Descope order
+16. Risk register
+17. Open decisions
+Appendix A. Data contracts
+  A.1 vanta_labels , partitioned by horizon and year
+  A.2 vanta_calibration
+  A.3 vanta_gate_log , immutable, one row per (decision date, candidate)
+  A.4 Version tags
+Appendix B. Decision log
+Appendix C. Glossary
+Appendix D. References
+
+Document control
+Field                                                         Value
+
+Document                                                      LYNX Architecture and Setup Documentation, v6.0
+                                                              (final architecture)
+
+Date                                                          20 October 2026
+
+Purpose                                                       One self-contained description of the whole project: the
+                                                              idea, the data, the models, the decision layer, the
+                                                              platform, the setup, the tests, the build plan and the
+                                                              risks. Written for supervisor review and as the working
+                                                              reference for the build.
+
+Supersedes                                                    v5.0 (9 October 2026), and through it the v3 plan, the
+                                                              v4 addendum, the v4 consolidated plan and the VANTA
+                                                              update note. Those remain as history only.
+
+Changes from v5.0                                             VANTA is defined as a pipeline of four named
+                                                              components (NEL, VN-ListNet, RW-CS, FCC), each tied
+                                                              to a test and an ablation. New PRISM compute
+                                                              component WFP (warm-started walk-forward
+                                                              pretraining) to bring per-fold pretraining inside the free
+                                                              GPU budget. New contributions statement (Section
+                                                              1.1), invariant N14, ablations A17 and A18, a
+                                                              validation-chosen weight decay τ, and updated build
+                                                              checks, risks, open decisions, glossary and references.
+                                                              The proposed “gate-first inference” idea was assessed
+                                                              and rejected (Appendix B).
+
+Team                                                          Aaron Abraham Mathew, Abel Tijo, Anitta Stalen,
+                                                              Christapher Thomas Rajesh (architecture and
+                                                              development lead)
+
+Supervisor                                                    Dr Renisha P Salim
+
+Predecessor                                                   SignalForge, a production US equity signal system. Its
+                                                              dataset is reused here as an unlabelled pretraining
+                                                              corpus.
+
+Status of the evidence                                        The system is partly built (Section 15). No result in
+                                                              this document comes from the full model on real
+                                                              NSE data. The only performance figures are from
+                                                              synthetic simulation and are design evidence, not
+                                                              findings.
+
+ HOW TO READ THIS DOCUMENT
+
+ Sections 1 to 3 explain what LYNX is and why. Sections 4 to 9 are the architecture, from data to
+ the published signal. Sections 10 to 12 explain how the system is trained, judged and kept
+ honest. Sections 13 and 14 cover delivery and setup. Sections 15 to 17 cover the build plan, the
+ risks and how the team works. Appendices hold the data contracts, the decision log and the
+ reference list.
+
+1. Executive summary
+LYNX ranks the roughly 700 most liquid stocks on India’s National Stock Exchange
+(NSE) and publishes a short list of trade ideas, each with an entry, a stop-loss and a
+target, plus a plain-language explanation. It never places trades. It is built as a final-year
+capstone and is to be delivered as a web app and as an installable mobile app on the App Store
+and the Play Store.
+
+The project has three ideas that set it apart from a standard “predict the stock” model.
+
+   1. It judges itself on money after costs, not on accuracy. Every training label comes
+      from simulating the exact trade that would have been published: next-day open entry, no
+        fill if the stock opens locked at its upper circuit, an ATR-based stop and target, delayed
+        exits when a stock is locked at its lower circuit, and the real Indian cost stack (STT,
+        brokerage, GST, stamp duty, exchange and SEBI fees, and impact cost) at the rates in
+      force on that date.
+   2. It publishes only what it can defend. A conformal selection gate compares each day’s
+      candidates against a year of matured, out-of-sample outcomes and publishes a name only
+        if the evidence says it is unlikely to lose after cost. Zero names on a bad day is a correct
+        answer. The gate targets a stated share of losing signals (30%) and the system reports
+        how well it actually hit that target, by market regime.
+   3. It is built to catch its own silent failures. Most quantitative projects fail by leaking the
+      future into the past without any error being raised. LYNX attaches an adversarial test to
+      every risky component: a hand-built input with a known answer, checked to fail against a
+        deliberately broken implementation.
+
+The model has two named parts. PRISM is the representation: a patch transformer pretrained
+on price sequences from two markets, plus a two-layer relational graph network over six kinds
+of stock-to-stock link, including promoter-group membership, which has no US equivalent.
+VANTA is the decision pipeline on top. It is a named pipeline, not a new algorithm: four
+components, each built on published methods and each tested and ablated on its own (Section
+9.0).
+
+A language layer (a small open LLM, Qwen3-4B, fine-tuned with LoRA) reads announcements
+and news and writes structured, verifiable facts to a knowledge graph. It is extractive only. The
+LLM never decides anything; it feeds the graph and it narrates decisions that were already
+made.
+
+  WHAT IS NEW, AND WHAT IS NOT
+
+  Every component of VANTA has prior art: triple-barrier style trade labelling (López de Prado),
+  ListNet ranking (Cao et al.), and conformal selection with false-discovery-rate control (Jin and
+  Candès; Barber et al.). The contribution claimed is the combination, applied to NSE rules and
+  evaluated net of Indian costs. In the wording used throughout this document, it is a combination
+  not reported in the literature we reviewed. LYNX does not claim a new algorithm, and does not
+  claim to be first.
+
+1.1 Contributions, stated precisely
+VANTA is the name of the LYNX decision pipeline. It is not the name of a new
+algorithm. The components below keep their original names and citations. What LYNX
+contributes is the specific adaptations, the way they are combined, and the measurement of
+each one.
+
+Code             Component              Built on                    What LYNX                   Claim level        Measured by
+                                                                    adds
+
+NEL              Net Executable         Triple-barrier              Labels from a               Primary            A2, N1 to N4, N6
+                 Labels                 labelling (López            simulated NSE
+                                        de Prado 2018)              trade: circuit-
+                                                                    lock no-fill and
+                                                                    delayed-exit
+                                                                    rules, ATR stop
+                                                                    and target, and
+                                                                    the date-
+                                                                    versioned Indian
+                                                                    cost stack
+
+RW-CS            Regime-                Conformal                   Calibration                 Primary            A10, A16, N5,
+                 Weighted               selection (Jin and          weights from                                   N7, N13
+                 Conformal              Candès 2023a),              recency and the
+                 Selection              weighted                    filtered HMM
+                                        conformal p-                regime posterior,
+                                        values (Barber et a Kish effective-n
+                                        al. 2023; Jin and fallback, and a
+                                        Candès 2023b)     hard cap of 10
+
+VN-ListNet       Volatility-            ListNet (Cao et             Gain divided by             Supporting         A3, A9, N10
+                 Normalised             al. 2007)                   ATR% · √h,
+                 ListNet with soft                                  winsorised on
+                 regime gating                                      the training fold,
+                                                                    and heads
+                                                                    blended by the
+                                                                    filtered posterior
+
+FCC              Full-Candidate         Standard                    Calibrates on               Design rule (not   N8, A17
+                 Calibration            conformal                   every scored,               a novelty claim)
+                                        practice                    matured
+                                                                    candidate, never
+                                                                    on published
+                                                                    names only
+
+WFP              Warm-started           Continued                   Each fold’s                 Supporting         A18, N14
+                 Walk-forward           pretraining                 encoder                     (compute)
+                 Pretraining            (Gururangan et              continues from
+                 (PRISM, not            al. 2020)                   the previous
+                 VANTA)                                             fold’s
+                                                                    checkpoint, so
+                                                                    per-fold
+                                                                    pretraining stays
+                                                                    leak-free while
+                                                                    costing a
+                                                                    fraction of
+                                                                    training from
+                                                                    scratch
+
+Position against the closest prior work found. Kaya and Nguyen (2025) apply standard
+conformal prediction sets to US stock selection, with a random train-test split, no transaction
+
+costs and no false-discovery control. Kato (2024) uses conformal prediction intervals to choose
+portfolios, with no false-discovery control and no regime weighting. Jin and Candès developed
+weighted conformal selection for applications such as drug-candidate screening, not equities.
+Regime-weighted conformal selection over cost-aware executable labels on NSE equities was
+not found in that search. The search was targeted, not a systematic review, so the claim is
+worded “to our knowledge”.
+
+Suggested wording for reports and slides: “VANTA is the decision-layer pipeline of LYNX. It
+combines cost-aware executable labelling, volatility-normalised listwise ranking and regime-
+weighted conformal selection with false-discovery-rate control. To our knowledge this
+combination has not been applied to Indian equity signals, and each component’s contribution is
+measured by ablation.”
+
+What is expected to hold, stated in advance. NEL and FCC are the components most likely
+to matter. RW-CS is the real research bet and could show only a modest gain over age-only
+weights. VN-ListNet is the component most likely to tie or lose to the CatBoost baseline B1.
+Each outcome is reported as found.
+
+2. Problem, goals and constraints
+
+2.1 The problem
+A retail investor in India faces roughly 700 liquid stocks and a flood of noisy advice. Most
+published “AI stock predictors” fail in one of four ways: they report accuracy instead of profit,
+they ignore costs and market rules, they leak future information into their tests, or they publish
+a call every day whatever the evidence. LYNX is designed against each of these.
+
+2.2 Goals
+#                                     Goal                                                    How it is measured
+
+G1                                    Rank the investable NSE universe                        Rank IC, net return per published
+                                      by expected net return over 5, 20                       signal, NDCG@10
+                                      and 60 trading sessions
+
+G2                                    Publish only signals the evidence                       Realised false-discovery rate (FDR)
+                                      supports, with the loss share                           against the 30% target, by fold and
+                                      controlled                                              regime
+
+G3                                    Beat honest baselines net of Indian                     Ablations A0 to A16 and baseline B1
+                                      costs, or report plainly that it did                    (CatBoost), with seed and fold
+                                      not                                                     spread
+
+G4                                    Show where each component helps                         One-claim-per-ablation design
+                                                                                              (Section 11)
+
+G5                                    Ship a web client and a store-                          Stage 26 acceptance checks
+                                      published mobile client on one
+                                      verified backend
+
+G6                                    Be reproducible: any published                          Version tags, MLflow registry,
+                                      signal can be traced to the model,                      immutable logs
+                                      labels, costs and calibration rows
+                                      that produced it
+
+2.3 Non-goals
+      LYNX does not execute trades, hold funds, or connect to a brokerage account for orders.
+      LYNX does not give personalised advice. Every signal is general information and carries a
+      disclaimer.
+      LYNX does not claim accuracy figures. Section 11.4 states in advance what results would
+      be believable and what would indicate a bug.
+      VANTA v1 does not cover intraday trading. See Section 2.5.
+
+2.4 Constraints that shape the design
+Constraint                                                        Consequence
+
+About 5,000 effective supervised samples (one per                 Keep the supervised head small. Spend compute on
+trading day, not per stock-day, because the 700 stocks            pretraining and on ensembling, never on a bigger task
+share one market factor on any day)                               head or architecture search.
+
+Constraint                                                          Consequence
+
+Local GPU is a 4 GB RTX 3050 Ti                                     Pretraining and LLM fine-tuning run on cloud GPUs
+                                                                    (Kaggle T4 or Colab). Supervised fine-tuning and
+                                                                    nightly inference fit locally. NLP inference and training
+                                                                    are never run on the card together.
+
+Free data only                                                      NSE archives, GDELT through BigQuery, NSE/BSE
+                                                                    announcements, RBI and NSDL. Parsers must survive
+                                                                    format changes, for example the July 2024 bhavcopy
+                                                                    cutover.
+
+Team of four, with AI coding tools used heavily                     Correctness comes from targeted invariant tests, not
+                                                                    from code review alone. A CLAUDE.md file carries the
+                                                                    forbidden list into every coding session.
+
+Paid tiers, and “entry, target, stop-loss” are the                  SEBI Research Analyst registration may apply once
+textbook form of a recommendation                                   money is involved. Payments are built in test mode,
+                                                                    and the question must be resolved before either store
+                                                                    submission.
+
+Supervisor requirement: the app must ship on both                   Mobile is mandatory, not a stretch goal. Backend first,
+stores                                                              clients second.
+
+2.5 Scope decision flagged for confirmation: horizons
+Earlier documents described three horizons: intraday, swing and long-term. VANTA v1 simulates
+trades on daily bars and covers horizons of 5, 20 and 60 sessions. Intraday trades need path
+simulation on 5-minute bars, which is deferred. This is consistent with the descope order in
+Section 15.4, where intraday is the first item to go, but it is a change from the earlier product
+description and should be confirmed by the team and the supervisor.
+
+3. Users, tiers and what is published
+
+3.1 What a user sees
+For each published name: the stock, the horizon, an entry rule (next session’s open), a stop-loss
+and a target (both as fixed multiples of the stock’s 14-day ATR), a short explanation grounded in
+the model’s attribution and retrieved evidence, a timestamp, and a disclaimer. Every signal is
+written to an immutable log so that the public track record can be audited.
+
+3.2 Tiers
+Tier                              Content                                                 Notes
+
+Lite                              A limited view served from its own                      Exact contents are fixed at Stage
+                                  endpoint family                                         26. A Lite token calling a Pro
+                                                                                          endpoint must receive a 403 with
+                                                                                          no body.
+
+Pro                               The gated VANTA list: names that
+                                  passed the selection gate, with
+                                  entry, stop and target
+
+Max                               The gated list, plus the ungated                        Showing trade levels for names the
+                                  ranking shown as a watchlist                            gate rejected would contradict the
+                                  without entry, stop or target,                          gate’s own promise and would add
+                                  clearly marked as not passing the                       exposure on the SEBI question.
+                                  gate
+
+4. System architecture
+
+4.1 Nine layers
+L                 Layer                                   Cadence                          Responsibility
+
+0                 Data                                    Nightly and bulk                 Ingest, validate, adjust for
+                                                                                           corporate actions, enforce
+                                                                                           point-in-time correctness
+
+1                 SSL pretraining                         Per fold, offline                Masked patch
+                                                                                           reconstruction over the
+                                                                                           two-market corpus.
+                                                                                           Produces the encoder
+                                                                                           checkpoint.
+
+2                 Features and scorer                     Nightly                          Price, delivery, F&O, flows
+                                                                                           and macro feature blocks.
+                                                                                           Deterministic scorer kept
+                                                                                           as a feature and a
+                                                                                           fallback. Override gates
+                                                                                           applied.
+
+3                 Agent extraction                        Nightly                          Qwen3-4B with LangGraph
+                                                                                           over announcements and
+                                                                                           news. Structured,
+                                                                                           extractive records only.
+
+4                 Knowledge graph                         Nightly write, monthly           Neo4j entity-event store.
+                                                          graph rebuild                    Emits relational features
+                                                                                           and graph edges.
+
+5                 PRISM encoders and                      Nightly                          The only decision-
+                  VANTA ranker                                                             maker. Scores every
+                                                                                           candidate for each
+                                                                                           horizon.
+
+6                 VANTA gate (RW-CS)                      Nightly                          Calibration, selection,
+                                                                                           publish set, ATR trade
+                                                                                           levels
+
+7                 Explanation                             Nightly, published names         LLM narration grounded in
+                                                          only                             SHAP attribution and
+                                                                                           retrieved evidence
+
+8                 Delivery                                Continuous                       API, web and mobile
+                                                                                           clients, tiers, immutable
+                                                                                           signal log
+
+9                 Self-improvement                        Weekly                           Outcome recording,
+                                                                                           calibration-store
+                                                                                           maturation, scheduled
+                                                                                           retraining, drift monitoring
+
+LYNX system: nine layers, one decision path
+
+       L0 Data                         L2 Features                L5 PRISM + VANTA                           L6 VANTA gate                      L7 Explanation                     L8 Delivery
+  bhavcopy, delivery %           price, delivery, F&O, macro     patch-transformer encoder                   conformal p-values                    SHAP attribution                FastAPI, tiered
+   F&O, ﬂows, macro                  deterministic scorer            R-GAT graph fusion                     BH at q = 0.3, cap 10                 LLM narrates only                 Next.js web
+ announcements, GDELT                   override gates               soft regime gating                       publishes 0 to 10                 grounded in evidence             React Native / Expo
+ US corpus (unlabelled)               point-in-time store         VANTA ranker: net labels                  ATR entry/stop/target               published names only            immutable signal log
+
+                                  KG features
+
+              text                                     graph edges
+                                                                                 encoder checkpoint
+
+L3 Agent extraction              L4 Knowledge graph               L1 SSL pretraining
+ Qwen3-4B + LangGraph             Neo4j entity-event store       masked patches, 2 markets
+ extractive records only          supply-chain, co-mention          oﬄine, once per fold
+source_span on every fact         edges; trailing data only        cut oﬀ before fold test
+
+                                                                                                                                                                               outcomes
+                                                                                                                            matured outcomes → calibration store
+
+                                                                                                                                       L9 Self-improvement (weekly)
+                                                                                                                outcome recorder | calibration-store maturation | scheduled retrain | drift monitor
+
+                                                                                            Hard rules
+                     Signal only, never executes trades | the LLM never decides | agents write to the graph, never to the signals table | ﬁltered regime posterior only
+
+                                                                     The nine layers and the single decision path
+
+Layers 1, 3 and 4 are new relative to SignalForge. Everything above Layer 5 supplies features.
+Everything below Layer 6 narrates or delivers. Nothing outside Layers 5 and 6 can add, remove
+or reorder a published signal.
+
+4.2 The decision path, end to end
+Data and features (L0, L2) feed the encoder and graph (L5). Text becomes graph facts through
+the extraction layer (L3, L4), and those facts return as features and graph edges. The encoder,
+pretrained offline (L1), and the regime posterior feed the VANTA ranker. The ranker’s scores are
+the only input to the gate (L6). The gate decides what is published. The explanation layer (L7) is
+written afterwards, only for published names. Delivery (L8) serves the result, and the self-
+improvement loop (L9) records what happened and feeds matured outcomes back into the
+calibration store.
+
+4.3 The daily cycle
+All times are IST. The nightly run follows the bhavcopy publication, and the morning run only
+refreshes and re-filters.
+
+Time                                                           Step
+
+18:00                                                          Bhavcopy, F&O, delivery and ban list land
+
+18:30                                                          Ingest and validate, with row counts checked against
+                                                               the expected universe
+
+18:45                                                          Corporate action adjustment. This runs before any
+                                                               feature computation.
+
+19:00                                                          Feature blocks written to the point-in-time store
+
+19:15                                                          Agent extraction over new announcements and the
+                                                               GDELT delta into the knowledge graph
+
+19:30                                                          Knowledge-graph feature emission. Graph rebuild on
+                                                               the first session of each month only.
+
+19:45                                                          Encoder and ranker inference for all horizons
+
+20:00                                                          Filtered regime posterior, calibration lookup, p-values,
+                                                               BH selection, publish set
+
+20:15                                                          SHAP attribution and LLM explanation, published
+                                                               names only
+
+20:30                                                          Snapshot to Postgres and Redis, immutable log write,
+                                                               MLflow record
+
+08:00                                                          Publish swing and long-horizon signals
+
+09:00                                                          Pre-open re-filter: drop names at an upper circuit or in
+                                                               the F&O ban list
+
+Outcome recording runs weekly and as each horizon matures.
+
+4.4 What stays deterministic
+The original SignalForge scorer (a weighted score over four rule layers) is kept as an auditable,
+cheap fallback and as a feature provider. One change was needed. Its rules were absolute, for
+example “RSI below 35 adds 20 points”, which fires for every stock in a market-wide sell-off. Its
+
+outputs are therefore cross-sectionally z-scored within each date before they enter the
+feature matrix. A side benefit is robustness to level shifts: when peak-margin rules changed in
+2021, every stock’s delivery percentage moved together, and a per-date normalised feature saw
+no discontinuity.
+
+  THE TWO-PART DEFENCE AGAINST NON-STATIONARITY
+
+  Cross-sectional normalisation removes level breaks. Rolling training windows remove
+  relationship breaks. Neither alone is enough. Together they answer Indian market structure
+  changes such as demonetisation, peak margin, mutual-fund recategorisation, T+1 settlement and
+  F&O curbs.
+
+5. Data architecture
+
+5.1 Sources
+Need                                   Source                                                  Notes
+
+Daily OHLCV and delivery %             NSE bhavcopy and                                        The backbone. Delivery percentage
+                                       sec_bhavdata_full (scraped)                             exists nowhere else and is the
+                                                                                               strongest India-specific feature.
+                                                                                               yfinance is a cross-check only,
+                                                                                               because it drops delivery data and
+                                                                                               its corporate-action adjustment for
+                                                                                               Indian tickers is unreliable.
+
+F&O data                               NSE F&O bhavcopy                                        Open interest, rollover, ban list
+
+Circuit data                           NSE price-band hit lists                                Drives lock detection in the label
+                                                                                               simulator
+
+Impact cost                            NSE published per-security figures                      Feeds the liquidity screen and the
+                                                                                               cost model. A flat slippage
+                                                                                               assumption is not used.
+
+Indices                                Nifty, Bank Nifty, India VIX, Sensex                    Display and regime features
+
+Flows                                  NSDL and NSE                                            FII and DII daily net flows
+
+Macro                                  RBI DBIE, MOSPI                                         Repo rate, CPI, IIP, USDINR
+
+Historical constituents                NSE index-change announcements                          Assembled by hand. Tedious, and a
+                                                                                               real differentiator.
+
+Announcements                          NSE and BSE feeds                                       Highest signal-to-noise text source:
+                                                                                               official, structured, timestamped
+                                                                                               and ticker-tagged by construction.
+                                                                                               Built before the news pipeline.
+
+News history                           GDELT 2.0 GKG through BigQuery                          Free historical news at scale. Entity
+                                                                                               resolution to NSE tickers is built, not
+                                                                                               assumed. RSS feeds have no history
+                                                                                               and serve as a live layer only.
+
+US pretraining corpus                  SignalForge dataset (~800 tickers,                      Unlabelled use only
+                                       20 years)
+
+Intraday bars (deferred)               Kite Connect, Dhan or SmartAPI                          5-minute bars, not 1-minute
+
+5.2 What was measured, not assumed
+These facts come from probing NSE’s live archive during Stage 3. They set the effective window
+of the whole project.
+
+Dataset                                              First available                           Coverage
+
+OHLCV prices (bhavcopy)                              3 November 1994                           About 31 years
+
+Delivery % ( sec_bhavdata_full )                     30 September 2019                         About 6 years
+
+India VIX on disk                                    14 May 2014                               Regime features start here
+
+Consequences:
+
+        Walk-forward depth. Prices support up to roughly 25 yearly test folds under the 4-year
+        train, 1-year validate, 1-year test scheme. Features that need later data, such as delivery
+
+     and VIX-based regime inputs, cover fewer folds.
+     Delivery is a per-fold optional feature. Folds testing before September 2019 mask it
+     with a missingness indicator. The difference between delivery-enabled and delivery-
+     masked folds becomes ablation evidence.
+     Universe growth is real. File size grows about 37 times from 1994 to 2024 because NSE
+     listed a handful of securities then and thousands now. Early folds have a smaller
+     investable universe. This is reported, not corrected.
+     Deep history is an evaluation benefit, not a training benefit. 1995 data trains the
+     1999 model and never touches the 2024 model.
+
+5.3 Format and parser rules
+     July 2024 cutover. NSE circular 62424 replaced the legacy 14-column bhavcopy with the
+     34-column CM-UDiFF format from 8 July 2024, and the column names are entirely
+     different. Ingestion branches on this date. Equity rows in the new file are filtered by
+     instrument type.
+      sec_bhavdata_full has one stable format across the cutover and is the preferred
+     source from 30 September 2019, because it gives price and delivery together.
+     Quirks that must be handled: every column name except the first has a leading space; a
+     literal - means missing, not zero; dates are 03-Jun-2024 and are parsed with an explicit
+     format.
+     Never zero-fill a missing feature. A stock with zero delivery is a different fact from a
+     stock with no delivery data. Missing becomes NaN and carries a missingness indicator. A
+     zero-filled RSI would read as “maximally oversold”, which is a lie.
+     404 is a normal answer. Weekends, holidays and dates before a dataset starts all return
+     404. Ingestion treats it as “no trading day”.
+     Politeness. A browser-like User-Agent is required. Requests are sequential with a delay
+     of at least 0.4 to 0.5 seconds. Retries use exponential backoff for intermittent DNS
+     failures.
+
+5.4 Storage and ingestion design
+
+ data/raw/
+   bhavcopy/        one Parquet file per trading day (price)
+   delivery/        one Parquet file per trading day (sec_bhavdata_full)
+   fno_bhavcopy/    F&O files
+   announcements/   NSE and BSE announcements
+ data/processed/
+   corporate_actions.parquet, pit_features.parquet, *_checkpoint.json
+
+Parquet rather than CSV, because training reads thousands of these files repeatedly. One file per
+day, because it makes ingestion resumable, makes point-in-time reads trivial, and limits a
+corrupted download to one day. All writes are atomic: data is written to a temporary file and
+renamed, so an interrupted run can never leave a truncated file that reads as valid. A manifest
+records, for every date, whether it was fetched, was a holiday, failed or was empty, so a question
+like “why does 2011 look odd” has an answer months later. Re-running ingestion skips
+completed dates.
+
+5.5 Corporate actions, universe and point-in-time rules
+      Corporate action engine (Stage 4). Prices are adjusted for splits, bonuses and similar
+      events. The check: no adjusted daily return exceeds its price band without a matching
+      action record, across the full history. Lock detection always uses raw prices against the
+      band, and returns use adjusted prices.
+      Universe (Stage 5). Per-year membership lists built from historical index constituents.
+      Delisted names are retained with terminal values. Walk-forward uses historical
+      constituents only, never today’s index projected backwards.
+      Point-in-time store (Stage 12). A read as of date t provably returns only information
+      knowable before t. Fundamentals and announcements are keyed by publication time, not
+      event time.
+
+5.6 The Indian transaction cost model
+The cost model is built at Stage 6, before any feature, because the largest risk to the project is
+not that the architecture fails but that a sophisticated system is built and then found to have no
+edge after Indian frictions.
+
+Component                          Delivery (swing, long-term)                             Intraday
+
+STT                                0.1% on both sides                                      0.025% on the sell side only
+
+Brokerage                          Discount-broker schedule,                               same
+                                   assumption documented
+
+Exchange charges                   NSE published schedule                                  same
+
+GST                                On brokerage plus transaction                           same
+                                   charges. A tax on the fees, easy to
+                                   omit, and omitting it flatters results.
+
+Stamp duty                         Buy side, state-varying                                 same
+                                   (Maharashtra rates used)
+
+SEBI turnover fee                  Small but present                                       same
+
+Impact cost                        NSE published, per security                             same
+
+Round-trip total                   About 0.25 to 0.30%                                     About 0.06 to 0.10%
+
+Intraday is cheaper per round trip than delivery in India, because STT is 0.025% on the sell side
+only. What makes intraday hard is signal-to-noise and execution timing, not cost.
+
+All rates live in a date-versioned table, so a backtest over 2011 applies 2011’s STT. STT did
+not exist before 1 October 2004. The rates for stamp duty and exchange charges before that
+date are carried backwards and are flagged in the code as not independently verified.
+
+6. Features, override gates and the
+deterministic scorer
+
+6.1 Feature blocks
+Block                               Content                                                 Notes
+
+Price and technical                 Returns, ATR, moving averages, RSI                      Computed by a dependency-free,
+                                    and similar indicators                                  database-free function so it can be
+                                                                                            unit-tested without a live database
+
+India block                         Delivery %, F&O open interest and                       Delivery masked, never zero-filled,
+                                    rollover, FII/DII flows, promoter                       where unavailable
+                                    pledging, circuit and ban status
+
+Macro and regime inputs             India VIX, Nifty 500 breadth,                           Feed the regime model
+                                    USDINR change, repo rate, CPI, FII
+                                    flows
+
+Knowledge-graph features            Event type, polarity, magnitude,                        Extractive only
+                                    horizon and confidence from
+                                    extraction; propagated supplier and
+                                    group effects
+
+Deterministic scorer                Four-layer weighted score, z-scored                     Feature and fallback, not a decision-
+                                    per date                                                maker
+
+6.2 Override gates
+News gate, volatility gate, drawdown gate and event-proximity gate run before scoring. They
+are cheap, auditable, and catch failure modes that no learned model reliably catches. India-
+specific hard gates are retained: circuit limits, F&O ban periods, the liquidity cliff below the top
+200, corporate-action frequency and promoter pledging.
+
+7. Language and knowledge layer
+
+7.1 Why a structured extractor instead of FinBERT
+The case against FinBERT is not language: the corpus is almost entirely English. It is that
+FinBERT was trained on US text, so concepts such as promoter pledging, upper circuit, F&O
+ban, PSU/NBFC classification and QIP appear to it as unfamiliar tokens. A single sentiment
+number in [-1, +1] also discards the event type, the entity, the direction, the magnitude and the
+horizon, all of which the knowledge graph needs. Recent work finds that small instruction-tuned
+LLMs can match or beat FinBERT with little or no task-specific data.
+
+7.2 The extractor
+An instruction-tuned open model, Qwen3-4B with LoRA/QLoRA fine-tuning (confirmed to fit the
+4 GB local card for inference), emits one structured record per article or announcement.
+
+Field                                                           Content
+
+ entity                                                         Resolved NSE symbol
+
+ event_type                                                     One of about 18: results_beat, results_miss,
+                                                                guidance_up, guidance_down, order_win,
+                                                                capex_announcement, rating_upgrade,
+                                                                rating_downgrade, regulatory_action, promoter_buy,
+                                                                promoter_sell, pledge_increase, pledge_release, mna,
+                                                                litigation, management_change, qip_fundraise, other
+
+ polarity                                                       -1, 0 or +1
+
+ magnitude                                                      minor, material or transformative
+
+ horizon                                                        immediate, short, medium or long
+
+ confidence                                                     0 to 1
+
+ source_span                                                    Verbatim text that supports the extraction
+
+ related                                                        Co-mentioned entities, which populate graph edges
+
+  THE RULE THAT KEEPS THE AGENT LAYER HONEST: EXTRACTIVE, NOT GENERATIVE
+
+  Facts written to the knowledge graph must be extractive and verifiable. “Company A supplies
+  Company B”, extracted from a related-party disclosure with a source_span , can be checked
+  against the original. “Sector sentiment is deteriorating” is an LLM opinion with no ground truth,
+  and it never enters the feature matrix. Extraction can be validated by hand-labelling 500 articles
+  and reporting precision and recall per event type. Judgment cannot be validated.
+
+7.3 Knowledge graph
+Neo4j stores entities, events and relations. Agents write to the graph and never to the signals
+table. The graph feeds the model in two ways: relational features, and two of the six edge types
+in the stock graph (supply chain and co-mention). Every graph snapshot used in training is built
+from trailing data only.
+
+7.4 Hardware routing
+Stage                             Where                                                   Note
+
+SSL pretraining                   Cloud GPU (Kaggle T4 16 GB or                           The long runs. Checkpoint every
+                                  Colab)                                                  epoch, because free sessions time
+                                                                                          out.
+
+LLM LoRA fine-tune                Cloud GPU                                               QLoRA
+
+LLM batch inference               Cloud or local                                          Nightly over new items. The
+                                                                                          historical backfill is a one-time bulk
+                                                                                          job.
+
+Supervised fine-tune              Local 4 GB                                              Small task head (about 500k
+                                                                                          parameters)
+
+Nightly inference                 Local 4 GB                                              700 stocks, one forward pass
+
+NLP inference and model training are never co-resident on the 4 GB card. Extraction is a nightly
+stage that finishes before any training begins.
+
+8. PRISM: the representation
+PRISM (Pretrained Relational Index-neutral Signal Model) is everything that turns data into a
+score-ready representation. It is kept from the v4 design except where Section 9 says otherwise.
+
+8.1 Cross-market self-supervised pretraining
+The encoder is trained before it sees any ranking label, on a task that needs no labels at all.
+
+Item                                                            Specification
+
+Objective                                                       Masked patch reconstruction. A price sequence is cut
+                                                                into patches of 5 trading days, a random 40% are
+                                                                masked, and the encoder reconstructs them from
+                                                                context. Loss: mean squared error over masked
+                                                                positions only.
+
+Why it works                                                    Reconstruction forces the encoder to learn volatility
+                                                                clustering, mean reversion and volume-price coupling,
+                                                                which are the properties that make masked patches
+                                                                predictable.
+
+Corpus                                                          India NSE bhavcopy (about 1,500 tickers, including
+                                                                names outside the final universe, because illiquid
+                                                                names are still valid sequences), the SignalForge US
+                                                                dataset (about 800 tickers), and about 40 index series
+
+Windowing                                                       Overlapping 250-day sequences with stride 5: on the
+                                                                order of one million sequences, three orders of
+                                                                magnitude more than the 5,000 effective supervised
+                                                                samples
+
+Encoder                                                         Patch transformer, 6 layers, d_model 256, 8 heads,
+                                                                about 5 million parameters
+
+Why SignalForge helps                                           Unlabelled price sequences carry no market-specific
+                                                                label meaning. What transfers is the shape of financial
+                                                                time series. The first project’s data becomes the
+                                                                second project’s pretraining corpus.
+
+  PRETRAINING LEAKAGE: THE FAILURE UNIQUE TO THIS DESIGN
+
+  The pretraining corpus must be split by time, not by ticker. An encoder pretrained on
+  sequences running to 2026 and then fine-tuned on a fold that tests 2015 has seen the future of
+  that fold, and every result would be silently invalid. For a fold testing year Y, both pretraining
+  and fine-tuning use data ending before Y minus the embargo. In practice this means one encoder
+  per fold. Cutting this corner is the most damaging shortcut available in the architecture.
+
+8.1.1 WFP: warm-started walk-forward pretraining
+
+The problem. Training every fold’s encoder from scratch costs 12 to 48 hours on a T4. Over up
+to 25 price folds that is several hundred GPU-hours, several times the free Kaggle allowance of
+about 30 GPU-hours a week. As specified in v5, the plan did not fit its own compute budget.
+
+The change. The first fold is pretrained from scratch. Each later fold k starts from fold k−1’s
+checkpoint and continues pretraining on the sequences added since, up to fold k’s cutoff (test
+start minus embargo), with a short replay sample of older sequences so earlier eras are not
+
+forgotten. Fold k−1’s checkpoint only ever saw data ending before fold k−1’s cutoff, which is
+earlier than fold k’s, so the chain never sees the future of any fold.
+
+Item                                                           Specification
+
+First fold                                                     From scratch, full schedule
+
+Later folds                                                    Continue from the previous fold’s checkpoint. New data
+                                                               since the last cutoff plus a 20% replay of older
+                                                               sequences. Fixed step budget, set at Stage 21 from the
+                                                               loss curve.
+
+Leakage rule                                                   Every ancestor checkpoint’s data cutoff is at or before
+                                                               the current fold’s cutoff. Enforced by invariant N14
+                                                               from the checkpoint lineage recorded in MLflow.
+
+Expected saving                                                Later folds should need a small fraction of the from-
+                                                               scratch time. The real figure is measured at Stage 21,
+                                                               not assumed.
+
+Check that it is not hurting                                   Ablation A18: warm-started against from-scratch on
+                                                               three folds, compared on held-out reconstruction loss
+                                                               and on downstream rank IC
+
+Fallback                                                       If A18 shows a material loss, train from scratch only on
+                                                               the folds used for the headline PRISM results and
+                                                               report the reduced fold count
+
+8.2 Heterogeneous temporal graph (R-GAT)
+Stocks are nodes. Six edge types are rebuilt monthly from trailing data only.
+
+Edge                               Source                                                  Contribution
+
+same_sector                        NIC / GICS classification                               Baseline economic linkage
+
+same_promoter_group                NSE/BSE promoter disclosures:                           The India-specific edge. Tata,
+                                   about 35 groups and 150 entities                        Reliance, Adani, Birla, Bajaj, JSW
+                                                                                           and Vedanta members reprice
+                                                                                           together on group news. In January
+                                                                                           2023 one report moved ten Adani-
+                                                                                           group tickers. There is no US
+                                                                                           analogue.
+
+supply_chain                       Knowledge graph, from related-                          Propagates a supplier’s results to its
+                                   party disclosures and news                              customers. This edge is what makes
+                                                                                           the agent layer contribute
+                                                                                           measurably rather than
+                                                                                           decoratively.
+
+corr_knn                           Top 8 by 120-day return correlation,                    Co-movement the taxonomy misses
+                                   excluding same-sector
+
+index_comembership                 Nifty-family membership                                 Pure flow effect from index-fund
+                                                                                           rebalancing
+
+co_mention                         Knowledge graph, from GDELT co-                         Emergent, event-driven association
+                                   occurrence in one article
+
+The model is a relational graph attention network with two layers. Two only: with 700
+nodes and dense sector edges, two hops already reach most of the graph, and a third layer
+smooths node representations toward one global average, which rediscovers the market factor
+that the label design removes. Attention is used instead of fixed weights because the right
+weight on a promoter-group edge depends on state: group members track each other tightly
+
+during group events and loosely otherwise. A promoter-group dummy variable in a tree model
+encodes membership. Attention encodes propagation, whose strength varies.
+
+8.3 Regime model
+A 3-state Gaussian hidden Markov model over India VIX, FII net flow, Nifty 500 breadth and
+USDINR change describes the market regime. It is fitted on training data only.
+
+  THE BUG THAT INVALIDATES REGIME RESULTS: SMOOTHED STATES
+
+  At inference the model must use the forward algorithm, which gives the filtered state
+  probability using observations up to time t. Viterbi decoding and smoothed posteriors condition
+  on the whole sequence, including the future. A backtest built on them looks spectacular and does
+  not survive a week live. The common library trap: hmmlearn ’s predict_proba runs forward-
+  backward and returns smoothed posteriors. It is forbidden here, and the forward recursion is
+  implemented explicitly.
+
+In v5 the regime model no longer routes to hard-selected heads. Its filtered posterior is used as
+a set of soft weights in VN-ListNet (Section 9.2) and as part of the RW-CS calibration weights
+(Section 9.3).
+
+8.4 Why a small supervised head on a large encoder
+The pretrained encoder may be large because it learns from a million unlabelled sequences. The
+task head that maps it to a score sees about 5,000 effective samples and stays small. This split is
+the most defensible design decision in the project, and it is what makes “we trained for three
+days” a real claim rather than a boast.
+
+9. VANTA: the decision pipeline
+VANTA replaces PRISM’s labels, ranking loss and publish gate. The encoders, graph, data layer
+and language layer stay. This section is the authoritative specification.
+
+9.0 The pipeline and its components
+VANTA is a pipeline: labels, then ranking, then selection, then trade levels, then tiers. It
+contains four named components (Section 1.1). Each one has its own specification, its own
+invariant tests, and its own ablation, so it can be kept or dropped on evidence.
+
+Part                      Component                             Section                          Kept only if
+
+A                         NEL, net executable labels 9.1                                         Net return per published
+                                                                                                 signal beats gross labels
+                                                                                                 (A2)
+
+B                         VN-ListNet, volatility-               9.2                              It beats plain ListNet (A3)
+                          normalised ranking with                                                and is not beaten by B1
+                          soft regime gating                                                     through the same gate;
+                                                                                                 otherwise B1 becomes the
+                                                                                                 ranker and the result is
+                                                                                                 reported
+
+C                         RW-CS, regime-weighted                9.3                              Its realised FDR by regime
+                          conformal selection                                                    is closer to q than age-
+                                                                                                 only and uniform weights
+                                                                                                 (A16)
+
+C                         FCC, full-candidate                   9.3                              Always kept. It is a
+                          calibration                                                            correctness rule (N8). A17
+                                                                                                 measures how much bias
+                                                                                                 published-only calibration
+                                                                                                 would have introduced.
+
+D                         ATR trade levels                      9.4                              A11 shows stops and
+                                                                                                 targets do not destroy
+                                                                                                 expected value
+
+Every component’s settings are chosen on validation folds only and recorded in the version tags
+(Appendix A.4).
+
+9.1 Part A: NEL, net executable labels
+For every (stock i, decision date t), the system simulates the exact trade that would have been
+published at t.
+
+Rule                                                            Specification
+
+Decision time                                                   After the close of t. The weekly decision date is the last
+                                                                session of the week.
+
+Entry                                                           Raw open of session t+1. No fill if the stock opens
+                                                                locked at its upper circuit, defined as: the symbol is on
+                                                                that day’s price-band hit list as an upper hit and raw
+                                                                open equals raw high.
+
+Stop                                                            Entry minus k_s times ATR(14) at t. If price gaps
+                                                                through the stop at the open, the fill is at the open.
+
+Rule                                                            Specification
+
+Target                                                          Entry plus k_t times ATR(14) at t. If price gaps through
+                                                                the target, the fill is at the target (conservative: no
+                                                                windfall).
+
+Same-day ambiguity                                              If stop and target both sit inside one day’s range,
+                                                                assume the stop hit first. Daily bars cannot resolve
+                                                                the order, so the conservative choice is used.
+
+Lower-circuit lock                                              A session is lower-locked at close if the symbol is on
+                                                                the hit list as a lower hit and raw close equals raw low.
+                                                                A stop triggered inside a lock exits at the close of the
+                                                                first session that is not lower-locked, and the delay is
+                                                                recorded.
+
+Time exit                                                       Close of session t+h
+
+Corporate actions                                               Returns use Stage 4 adjusted prices. Lock detection
+                                                                always uses raw prices against the band.
+
+Delisting                                                       Exit at the last traded price (the Stage 5 terminal
+                                                                value)
+
+Cost                                                            Stock-specific round trip from the Stage 6 model at
+                                                                trade-date rates, plus impact cost. Entry and exit legs
+                                                                are stored separately.
+
+Label                                                           y = payoff minus round-trip cost, a net return
+
+k_s and k_t are chosen per horizon on validation folds only, then frozen per fold and versioned.
+
+Design choices worth knowing.
+
+        Incumbency is not baked into labels. An early proposal let names already published
+        last week skip the entry cost inside the label. That makes the training target depend on
+        the model’s own past publications, which do not exist historically and change whenever
+        the model changes, so the target would become circular. Labels stay policy-free: every row
+        is a full round trip, and cost_entry is stored separately so an incumbent’s net return can
+        be computed later. The accounting layer charges the entry leg once per position (invariant
+        N12).
+        No-fill handling is a training configuration, not a stored value. Default: a penalty
+        value. It stays configurable so it can be ablated.
+        Lock detection uses only the hit lists. Inferred price bands were measured at 87.8%
+        accuracy, which is not good enough, so rows with no hit-list coverage are excluded from
+        primary results.
+        Scope. Horizons of 5, 20 and 60 sessions on daily bars.
+
+9.2 Part B: VN-ListNet, volatility-normalised listwise ranking
+   1. Warm start. A ridge regression or a small MLP on the net labels, on top of encoder
+      outputs (or on the raw feature matrix for baselines).
+   2. Fine-tune. ListNet (Plackett-Luce) loss over each decision date’s candidate list. The gain
+      is y divided by (ATR% times the square root of h), winsorised at the 2nd and 98th
+      percentiles of the training fold only.
+   3. Why normalise. Top-heavy listwise losses on noisy returns favour high-volatility “lottery”
+      stocks. In the synthetic runs, removing the normalisation dropped simulated Sharpe from
+        2.42 to 0.23. Ablation A3 tests whether the same effect appears on NSE data.
+
+   4. Soft regime gating. Score = sum over regimes k of the filtered posterior π_t(k) times
+      head_k(z). The weights are posterior probabilities, not learned parameters, so the rule
+      against learned gating networks still holds in spirit.
+
+9.3 Part C: RW-CS and FCC, the publish gate
+The gate follows conformal selection (Jin and Candès 2023a) with non-exchangeable weighting
+in the spirit of Barber et al. (2023).
+
+Calibration set at decision date T. Out-of-sample (score, realised net return) pairs for all
+scored candidates from the last 52 weeks, not only those that were published, because
+restricting to published names introduces selection bias (invariant N8). A row enters only after
+its horizon has passed and its outcome is known (invariant N5). For the 60-session horizon the
+effective window is shorter, because recent rows have not matured.
+
+Weights.
+
+w_i = exp(-age_i / τ) times exp(-‖π_i - π_T‖₁)
+
+Age is in weeks, π is the 3-state filtered posterior, and the distance is the L1 norm. The test
+point carries weight 1. A candidate gets more weight in the calibration if it is recent and if its
+market regime resembled today’s. The decay scale τ is chosen per horizon on validation folds
+from {13, 26, 52} weeks (default 26), then frozen and recorded in gate_version . It is never
+chosen by looking at test folds.
+
+Computation. Sorting the calibration scores once per decision date and keeping a running sum
+of the weights of losing rows gives every candidate’s p-value in O((n + m) log n), for n
+calibration rows and m candidates. For about 175,000 rows and 700 candidates this takes well
+under a second on a CPU, so the gate adds nothing to the GPU budget.
+
+p-value for each test candidate j (null hypothesis: the trade loses after cost, y ≤ 0):
+
+p_j = (1 + sum over i of w_i · 1[y_i ≤ 0 and s_i ≥ s_j]) / (1 + sum of w_i)
+
+This is the clipped-score conformal p-value of Jin and Candès with conservative tie handling and
+weights.
+
+Selection.
+
+   1. Apply Benjamini-Hochberg at q = 0.3 across all candidates for date T.
+   2. Keep at most 10 names, in ascending p-value order, ties broken by score.
+   3. Zero published names is a valid outcome.
+
+What the gate promises, stated precisely.
+
+      Target. On average, at most q of published signals lose after cost.
+      Guarantee status. Exact false-discovery-rate control needs exchangeability. Three things
+      break it here: financial time series are not exchangeable; the weights depend on observed
+      data (π_T), which takes the method outside the fixed-weight bound of Barber et al.; and
+      plain BH on weighted conformal p-values is not covered by Jin and Candès’s result (their
+      weighted-selection paper adds a pruning step for this reason). The cap at 10 also keeps a
+      subset of the BH set, which the BH guarantee does not cover.
+      Therefore the promise is an engineering target. It is validated empirically and reported
+      by regime. It is not a theorem, and the project never describes it as one.
+
+Measurement. FDR is the mean of the weekly false-discovery proportion, with weeks that
+publish nothing counted as 0. It is reported next to the pooled loss share (total losers
+divided by total published). The two can differ a lot when weekly publish counts vary.
+Fallback. The Kish effective sample size, (Σw)² / Σw², is logged for every decision. If
+regime weighting shrinks it below a threshold (proposed: 200), the gate falls back to age-
+only weights and logs that it did.
+
+VANTA: from simulated trades to a published list
+TRAINING PATH (oﬄine)
+
+    A. NEL trade simulator                                    Net label y                                            B. VN-ListNet ranker                                    Scores s
+ next-open entry; no ﬁll on upper lock                payoﬀ minus full round-trip cost                                 warm start: ridge / MLP                          one per candidate per
+  ATR stop and target; stop wins ties                   policy-free, no incumbency                                    ListNet on y / (ATR% · √h)                      decision date, per horizon
+        lower-lock delayed exit                           stored in vanta_labels                                     winsorised on train fold only                       out-of-sample only
+ stock-speciﬁc cost, trade-date rates                   purged by label_end_date                                     soft gate by ﬁltered regime
+
+                                                                                                                                                                                    today's scores
+
+PUBLISH PATH (each decision date T)
+
+    FCC calibration                 RW-CS weights                       p-values                              BH at q = 0.3                          Cap at 10                         Publish
+    all scored candidates              exp(−age/τ)                  null: trade loses                       across all candidates               ascending p-value                ATR entry/stop/target
+   matured outcomes only            × exp(−‖π − π_T‖₁)              after cost (y ≤ 0)                           for date T                     zero names is valid               gate log row written
+ last 52 weeks, same model          ﬁltered posterior π            weighted conformal                                                                                              tier rules applied
+
+  What the gate promises, stated precisely
+  Target: on average, at most q = 30% of published signals lose after cost.
+  Exact FDR control holds only under exchangeability. Markets are not exchangeable, the weights depend on observed data,
+  and plain BH on weighted conformal p-values is outside the published theorems. The cap at 10 also keeps a subset of the BH set.
+  So q is an engineering target, measured as realised FDR by regime and reported with the pooled loss share. It is not a theorem.
+
+                                                                VANTA from simulated trades to a published list
+
+9.4 Part D: trade levels
+Labels simulate stops and targets at k_s and k_t times ATR. If the published levels came from a
+different source, the labels would not describe the published trade. So the published levels are
+the same ATR multiples: entry at next open, stop at entry minus k_s·ATR, target at entry plus
+k_t·ATR. The v4 quantile heads leave the decision path and may be kept only as a displayed
+“expected range” under ablation A11. If they are kept, the quantile-crossing check (a lower
+quantile never above a higher one) still applies to them.
+
+9.5 Evidence so far, and how much to trust it
+Configuration (synthetic data, 6 seeds)                             Result
+
+Baseline: v4-style ranker and per-stock gate                        Sharpe 1.05, net 0.36% per signal, 47% of signals lost
+
+A and B only (net labels and normalised ranking)                    Sharpe 2.42
+
+A and B without volatility normalisation                            Sharpe 0.23
+
+Full VANTA (A, B and gate)                                          Win rate 60%, net 1.10% per signal, 14% of signals lost
+                                                                    (pooled share)
+
+  READ THESE NUMBERS WITH CARE
+
+  The synthetic data-generating process may itself contain the effects that VANTA is designed to
+  fix, such as heavy idiosyncratic volatility tails. These figures are design evidence only. They do
+  not transfer automatically to NSE data. Milestone M1 and ablations A2, A3 and A10 decide.
+
+10. Training and validation protocol
+
+10.1 Four training stages per fold
+#                      Stage                          Data                               Duration              Output
+
+1                      SSL pretraining                About one million                  First fold 12 to 48   Encoder checkpoint
+                       (WFP)                          unlabelled                         hours; later folds
+                                                      sequences, ending                  warm-started from
+                                                      before the fold                    the previous fold
+                                                      boundary                           (Section 8.1.1),
+                                                                                         measured at Stage
+                                                                                         21
+
+2                      Supervised fine-tune           Fold training                      1 to 3 hours per      Ranker
+                                                      window, net                        seed, 10 seeds
+                                                      executable labels.
+                                                      Ridge or MLP warm
+                                                      start, then ListNet.
+
+3                      Regime model and               HMM fitted on the                  Under 1 hour          HMM and gating
+                       soft gating                    training window.                                         weights
+                                                      Filtered posterior
+                                                      computed by
+                                                      forward recursion.
+
+4                      Calibration store              Out-of-fold scores for             Minutes               vanta_calibration
+                                                      the preceding 52                                         rows
+                                                      weeks, written
+                                                      before the gate runs,
+                                                      with outcomes
+                                                      added as they
+                                                      mature
+
+10.2 Walk-forward discipline
+
+    Rolling walk-forward: 4y train, 1y validate, 1y test
+
+    Fold 1             train (4y)                 val        test
+
+    Fold 2                      train (4y)                   val       test
+
+    Fold 3                               train (4y)                     val       test
+
+    Fold 4                                          train (4y)                     val        test
+
+              embargo and purge: at least the label horizon (5, 20 or 60 sessions).
+              Training rows whose label ends inside it are dropped.
+
+                                             Rolling walk-forward with embargo
+
+The window is rolling, not expanding: four years to train, one to validate, one to test, rolled by
+one year. Rolling matters because Indian market structure has broken repeatedly. Under an
+
+expanding window the 2025 model is partly fitted on 2006 microstructure, which is
+contamination, not data.
+
+      Embargo and purging. The embargo is at least the label horizon, per horizon (5, 20 or
+      60 sessions), and is a configuration parameter, never a constant. Training rows whose
+      label ends inside the embargo ( label_end_date at or after test start minus embargo) are
+      dropped. In multi-horizon training the longest horizon governs, which is a real cost of
+      multi-task learning and is stated rather than ignored. (A 2-day embargo against a 3-day
+      label was an earlier mistake: it leaks.)
+      Seeds. Ten, not five. Seed variance at this sample size is large. All figures are mean and
+      standard deviation across seeds and folds. A single-seed number is noise.
+      Nested search. Hyperparameters are tuned inside the training window so the test fold is
+      never tuned on.
+      Statistics fitted on the training fold only. Normalisation, winsorisation, k_s and k_t,
+      the HMM and gain scaling all use training-fold data only (invariants N3 and N10).
+
+10.3 Where compute helps and where it does not
+Spend                                    Helps?                                                  Why
+
+SSL pretraining, once per fold           Yes                                                     Learns from a million unlabelled
+                                                                                                 sequences. The dominant compute
+                                                                                                 line, and the one that earns its cost.
+
+Warm-starting each fold from the         Yes                                                     Keeps per-fold pretraining leak-free
+previous one (WFP)                                                                               while removing most of its repeated
+                                                                                                 cost. Checked by A18.
+
+10-seed ensembling                       Yes                                                     Turns a noisy point estimate into a
+                                                                                                 distribution. Embarrassingly
+                                                                                                 parallel.
+
+Nested hyperparameter search             Yes                                                     Prevents tuning on the test fold, the
+                                                                                                 quiet way most reported results
+                                                                                                 inflate
+
+Historical LLM extraction backfill       Yes                                                     One-time bulk job that unlocks news
+                                                                                                 features across the whole walk-
+                                                                                                 forward
+
+Larger supervised head                   No                                                      5,000 effective samples: more
+                                                                                                 parameters fit noise
+
+More epochs on the task head             No                                                      Early stopping on validation rank IC
+                                                                                                 governs
+
+Neural architecture search               Actively harmful                                        A model free to redesign itself
+                                                                                                 against 5,000 samples finds noise
+                                                                                                 and reports it as structure
+
+11. Evaluation
+For a project of this kind the evaluation chapter carries more weight than the architecture
+chapter. A modest model measured honestly is a stronger submission than a sophisticated model
+measured carelessly.
+
+11.1 Metrics
+Metric                                    Definition                                              Purpose
+
+Rank IC                                   Daily Spearman correlation of                           Primary measure of ordering skill
+                                          predicted and realised cross-
+                                          sectional rank
+
+IC-IR                                     Mean rank IC divided by its                             Consistency: IC 0.03 every day
+                                          standard deviation                                      beats IC 0.06 half the time
+
+NDCG@10                                   Top-weighted ranking quality at 10                      The product metric, because the
+                                                                                                  output is a shortlist
+
+Net return per published signal           Mean net return of published signals The number that decides whether
+                                          after full costs, with stops and     the product is useful
+                                          targets active
+
+Realised FDR                              Mean weekly false-discovery                             Evidence for the gate’s promise
+                                          proportion, zero-publish weeks
+                                          counted as 0, by fold and regime
+
+Pooled loss share                         Total losing signals divided by total                   Reported next to FDR
+                                          published
+
+Calibration coverage                      Realised loss rate among                                Evidence for the calibration claim
+                                          calibration-eligible candidates
+                                          against the gate’s implied rate
+
+Publish-count distribution                Weekly counts, share of zero-                           A healthy system abstains
+                                          publish weeks, how often the cap                        sometimes
+                                          binds
+
+Hit rate, realised R, stop-out rate       Path-dependent outcomes with                            Rank IC alone no longer suffices
+                                          stops active                                            once stops exist
+
+Extraction precision and recall           Per event type, against 500 hand-                       Evidence that the agent layer is
+                                          labelled articles                                       trustworthy
+
+11.2 Baselines
+        A0, momentum 12-1. The dumb baseline. Many published ML equity results fail to beat
+        it net of costs.
+        A1, SignalForge port. The predecessor: deterministic score with an XGBoost binary
+        classifier, thresholded. Does the reformulation beat it on identical Indian data under
+        identical conditions?
+        B1, CatBoost on the same features and splits, trained on net labels and passed
+        through the same VANTA gate. This is the main baseline. Published gains from stock
+        graph networks and from pretraining on financial series are small and inconsistent, and
+        finance pretraining at best ties a well-tuned gradient-boosted model. Comparing PRISM
+        plus VANTA against B1 isolates whether the encoders earn their cost.
+
+11.3 Ablation suite
+Each ablation isolates one claim. This is what makes the project research rather than a
+demonstration.
+
+ID                                Comparison                                              Question
+
+A0                                Momentum 12-1                                           The baseline everything must beat
+
+A1                                SignalForge port                                        Does the reformulation beat the
+                                                                                          predecessor?
+
+B1                                CatBoost, same features and splits                      Main baseline
+
+A2                                Gross against net labels                                Do executable net labels improve
+                                                                                          net return per published signal?
+
+A3                                With against without volatility                         Does the lottery-stock effect seen in
+                                  normalisation                                           synthetic runs appear on NSE?
+
+A4                                Remove the US corpus                                    Does cross-market transfer help, or
+                                                                                          only pretraining?
+
+A5                                Remove multi-horizon training                           Does multi-task supervision improve
+                                                                                          label efficiency?
+
+A6                                Remove the graph                                        Does relational structure
+                                                                                          contribute?
+
+A7                                Remove promoter-group edges only                        The India-specific claim.
+                                                                                          Degradation here shows a market-
+                                                                                          structure effect with no US
+                                                                                          analogue.
+
+A8                                Remove knowledge-graph features                         Does the agent layer contribute
+                                                                                          measurably, or only decoratively?
+
+A9                                Hard-routed heads against soft                          Does soft regime gating help?
+                                  gating against no regime
+
+A10                               Gate arms: (a) ungated top 10, (b)                      Does the new gate beat both?
+                                  per-stock conformal gate (v4), (c)
+                                  VANTA gate
+
+A11                               ATR-multiple levels against hold to                     Do stops and targets add or destroy
+                                  horizon, and quantile levels as                         expected value, per horizon?
+                                  display only
+
+A12                               Full system                                             The system as specified
+
+A13                               LightGBM lambdarank                                     Isolates the ranking objective
+
+A14                               Remove SSL pretraining, tested                          Does pretraining earn its cost?
+                                  against B1
+
+A15                               q in {0.2, 0.3, 0.4}                                    Sensitivity of the promise
+
+A16                               Gate weights: uniform, age only,                        Is RW-CS worth it? Does pruning
+                                  age times regime, age times regime                      change realised FDR?
+                                  with weighted-selection pruning
+
+A17                               Calibration on all scored candidates                    How much optimistic bias would
+                                  (FCC) against published names only                      published-only calibration
+                                                                                          introduce? FCC stays in either case.
+
+A18                               WFP warm-started pretraining                            Does warm-starting cost accuracy,
+                                  against from-scratch, on three folds                    and how much time does it save?
+
+A1, A3, A7 and A14 are the ones that matter most, with A2 and A16 as the direct tests of the two
+primary contributions (NEL and RW-CS). A negative result on any of them is still a result, and a
+
+well-measured negative finding outranks an unmeasured positive claim. Every gated arm is
+reported by fold and by regime (regime is bucketed by the argmax of the filtered posterior).
+
+11.4 Era analysis and expected results, stated in advance
+Rank IC is reported by era across the whole walk-forward, covering the stress windows of 2000,
+2008, 2013, 2016 (demonetisation), 2018 (IL&FS and the NBFC crisis), 2020 (COVID) and 2021
+(retail boom). Reporting through demonetisation and the NBFC crisis is a harder test than any
+US equivalent. If early-period IC differs from recent-period IC, the project has empirically shown
+microstructure non-stationarity in Indian equities, which turns a data limitation into a finding.
+
+    NUMBERS TO EXPECT, STATED BEFORE TRAINING
+
+    A rank IC of 0.03 to 0.05 for swing horizons is genuinely good. Longer horizons may run slightly
+    higher. An IC above 0.10 is a bug, and the response is to open the invariant tests, not to
+    celebrate. A model that reports 85% directional accuracy has leakage, which is a near-certainty
+    to diagnose, not a possibility to weigh. Stating this in advance is a form of pre-registration: it
+    makes the eventual result more credible whatever it is.
+
+11.5 Milestone M1: the first real-data test of the new layer
+Purpose. Test the label simulator (Part A) and the gate (Part C) on real NSE data before any
+new model is trained. The scores are 12-1 momentum, recomputed weekly, which is already
+validated (the Stage 7 GO used monthly rebalancing). Any failure at M1 therefore belongs to A
+or C, not to a model.
+
+Setup. Horizons 5 and 20. k_s in {1.0, 1.5, 2.0} and k_t in {1.5, 2.0, 3.0} are chosen on the first
+three years of the window only, then frozen. The window starts at the first price-band hit list on
+disk. Two gate arms: age-only weights (needs no HMM) and age times regime weights (needs
+the filtered HMM and covers only the later part of the window). Comparisons: ungated weekly
+top 10 and the v4 per-stock gate.
+
+Pre-registered GO criteria, fixed before running.
+
+#                                     Criterion                                               Threshold
+
+1                                     All invariants N1 to N13 pass on real                   Required
+                                      data
+
+2                                     Realised FDR over the evaluation                        At most q + 0.05 (0.35)
+                                      window
+
+3                                     No calendar year has realised FDR                       0.5
+                                      above
+
+4                                     The gate is not degenerate                              Publishes in at least 20% of weeks
+
+5                                     Net return per published signal,                        At least the ungated top 10, with a
+                                      gated arm                                               weekly block-bootstrap 95%
+                                                                                              confidence interval
+
+Reading the result. If momentum has little weekly edge, a gate that mostly abstains passes
+criteria 2 and 3: the gate is doing its job. If criteria 2 or 3 fail, the gate is fixed before any new
+model is trained. The Stage 7 result (about 4.6% net annualised long-short decile spread,
+monthly) measures something different and is not evidence for or against M1.
+
+12. Invariants and the silent-failure
+catalogue
+
+12.1 Rules that are never broken
+      The LLM never emits a decision. PRISM and VANTA decide; the LLM narrates.
+      No trade execution. Signalling and information only.
+      Every scheduled job is wrapped so that one failure never stops the scheduler.
+      All secrets live in .env and are read through config.py . One database path and one model
+      path, fixed there on day one.
+      Walk-forward uses historical constituents only.
+      Every signal stores its full feature snapshot as JSON, and every signal shown to a user
+      carries a disclaimer.
+      Agents write to the knowledge graph and never to the signals table. Graph facts are
+      extractive and carry a source_span .
+      Pretraining respects the fold boundary, including every warm-start ancestor checkpoint.
+      Embargo is at least the label horizon, per horizon.
+      NLP inference and training are never co-resident on the 4 GB card.
+      No smoothed or Viterbi regime states anywhere. No learned gating network. No
+      architecture search.
+      No unmatured outcomes in the calibration store, and no mixing of model versions inside
+      one calibration set.
+      No incumbency logic inside training labels.
+      The gate’s q is never described as a guarantee.
+      No zero-filling of missing features.
+
+12.2 Silent failures: bugs that look like success
+These raise no error and often make results better. The only defence is a test that asserts the
+invariant directly, on a hand-built input with a known answer, and that is proved to fail against a
+deliberately broken implementation before it is trusted.
+
+#                   Area                      Failure                           Symptom                 Test
+
+1                   Corporate actions         Unadjusted splits                 Spurious -50%           No adjusted return
+                                              and bonuses                       returns; the ranker     outside its price
+                                                                                learns bonus            band without an
+                                                                                calendars               action record
+
+2                   Graph                     Graph snapshot                    Nothing errors; IC      Every snapshot built
+                                              includes future                   quietly rises           from trailing
+                                              edges                                                     windows only. A
+                                                                                                        synthetic future-
+                                                                                                        dated edge must not
+                                                                                                        change a prediction.
+
+3                   Normalisation             Full-history statistics           Invisible; IC roughly   Cross-sectional z-
+                                                                                doubles                 score per date;
+                                                                                                        assert no full-history
+                                                                                                        statistics
+
+#           Area                          Failure                           Symptom                   Test
+
+4           Regime                        Viterbi or smoothed               Backtest                  Forward recursion
+                                          states                            spectacular, live         only (N7)
+                                                                            results noise
+
+5           Pretraining                   Encoder saw the test              Every fold silently       Encoder checkpoint
+                                          fold, directly or                 invalid                   cutoff, and every
+                                          through a warm-                                             ancestor’s cutoff,
+                                          start ancestor                                              earlier than fold test
+                                                                                                      start minus embargo
+                                                                                                      (N14)
+
+6           Labels                        Horizon off by one                The 5-day head            Hand-labelled toy
+                                                                            trains on 4-day           path: each horizon’s
+                                                                            returns; loss looks       label equals the
+                                                                            normal                    manually computed
+                                                                                                      forward return
+
+7           Levels                        Quantile crossing                 A stop above entry        Lower quantile at
+                                          (only if display                                            most the higher
+                                          quantiles are kept)                                         quantile on every
+                                                                                                      displayed signal
+
+8           Calibration                   Window overlaps the               Coverage looks right      N5, N8 and N9 below
+                                          test fold or holds                in backtest,
+                                          unmatured                         degrades live
+                                          outcomes
+
+9           Costs                         Wrong-side or stale               Signals publish that      Cost function
+                                          cost                              should abstain            matches position
+                                                                                                      side and changes
+                                                                                                      across STT regime
+                                                                                                      dates (N6)
+
+10          Explanation                   LLM states a fact not             Fluent, plausible,        Every named driver
+                                          in the evidence                   unsupported               in the text appears
+                                                                                                      in the SHAP list or
+                                                                                                      retrieved evidence;
+                                                                                                      otherwise fall back
+                                                                                                      to a template
+
+11          Validation                    Date-type mismatch                Empty windows pass        Compare ISO strings,
+                                          in queries                        silently                  never integers;
+                                                                                                      assert row counts
+                                                                                                      per window
+
+12          Verification                  A check queries the               A stage passes            Every stage check
+                                          wrong table                       without testing its       queries the table
+                                                                            own output                that stage writes
+
+12.3 VANTA and PRISM invariant tests N1 to N14
+ID                             Invariant                                               Test
+
+N1                             No fill on a locked open                                A day on the hit list as upper with
+                                                                                       open equal to high gives
+                                                                                       NO_FILL_UPPER_LOCK , no exit price
+                                                                                       and no payoff
+
+ID                                 Invariant                                               Test
+
+N2                                 Stops respect lower-circuit locks                       Stop triggers on day d. Days d and
+                                                                                           d+1 are lower-locked at close, d+2
+                                                                                           is not. Exit is at d+2’s close with
+                                                                                           STOP_DELAYED_LOWER_LOCK and a
+                                                                                           delay of 2.
+
+N3                                 Same-day ambiguity resolves to the                      Both levels inside one day’s range
+                                   stop                                                    gives exit at the stop
+
+N4                                 Gap fills                                               A gap below the stop fills at the
+                                                                                           open. A gap above the target fills at
+                                                                                           the target.
+
+N5                                 The calibration set never holds an                      Every calibration row has
+                                   unmatured outcome                                        matured_at at or before T. An
+                                                                                           injected row with matured_at of
+                                                                                           T+1 is caught. Adding outcomes
+                                                                                           after T never changes p-values at T.
+
+N6                                 Labels use the cost model of the                        Output changes across a known STT
+                                   trade date                                              rate-change date
+
+N7                                 Regime weights use filtered                             The posterior at t computed on data
+                                   posteriors                                              up to t equals the posterior
+                                                                                           computed on the full series.
+                                                                                           Appending the future changes
+                                                                                           nothing.
+
+N8                                 Calibration covers all scored                           Calibration row count for a week
+                                   candidates                                              equals candidates scored, not
+                                                                                           names published
+
+N9                                 Calibration and test share model                        A mismatched row is rejected
+                                   version, candidate filter and out-of-
+                                   sample status
+
+N10                                Normalisation and winsorisation                         Changing test-fold labels does not
+                                   come from the training fold only                        change training gains
+
+N11                                Purging                                                 No training label with
+                                                                                           label_end_date at or after test
+                                                                                           start minus embargo
+
+N12                                Cost is charged once for                                A name selected in weeks w and
+                                   incumbents                                              w+1 shows one entry leg and one
+                                                                                           exit leg in the ledger
+
+N13                                p-value mechanics                                       p is in (0, 1] and non-increasing in
+                                                                                           score. Equal weights reduce to the
+                                                                                           unweighted conformal p-value.
+                                                                                           Published names are a subset of the
+                                                                                           BH set, at most 10, with
+                                                                                           cap_binding logged.
+
+N14                                WFP checkpoint lineage                                  Every ancestor of a fold’s encoder
+                                                                                           checkpoint has a data cutoff at or
+                                                                                           before that fold’s test start minus
+                                                                                           embargo. A checkpoint whose
+                                                                                           lineage contains a later cutoff is
+                                                                                           rejected.
+
+Delivery (Layer 8) and self-improvement (Layer 9) are excluded from this style of test on
+purpose. They are operational rather than statistical and are verified by integration testing: ten
+unattended runs, tier checks and log audits.
+
+13. Platform and delivery
+
+13.1 Technology stack
+Area                               Choice                                                  Rationale
+
+Data                               NSE bhavcopy (scraped), GDELT 2.0                       Section 5. Kite Connect, Dhan or
+                                   GKG via BigQuery, NSE/BSE                               SmartAPI only for the deferred
+                                   announcements, NSDL, RBI DBIE,                          intraday work.
+                                   MOSPI
+
+Models                             PyTorch, PyTorch Geometric,                             Encoder, graph network, baselines,
+                                   CatBoost (main baseline), LightGBM                      attribution, nested search
+                                   (ablation), hmmlearn (parameter
+                                   fitting only; inference is an explicit
+                                   forward recursion), SHAP, Optuna
+
+Gate                               Custom weighted conformal                               No library implements this exact
+                                   selection with Benjamini-Hochberg                       combination, and the p-value
+                                                                                           mechanics are covered by tests N5
+                                                                                           and N8 to N13
+
+Language                           Qwen3-4B with LoRA/QLoRA,                               Extractive extraction. A fixed,
+                                   LangChain, LangGraph                                    inspectable agent loop.
+
+Memory                             Neo4j, ChromaDB or pgvector, Groq                       Knowledge graph, vector store, and
+                                   API                                                     explanation generation. Explanation
+                                                                                           is off the decision path, so model
+                                                                                           choice carries no decision risk.
+
+Platform                           Prefect, MLflow, PostgreSQL,                            One nightly DAG and one morning
+                                   Parquet, Redis, Docker Compose                          DAG. MLflow is the registry and
+                                                                                           audit trail: the ablation suite is
+                                                                                           unreproducible without it.
+
+Compute                            Kaggle T4 or Colab (pretraining, LLM Checkpoint aggressively; free tiers
+                                   fine-tune); local RTX 3050 Ti 4 GB   have session limits
+                                   (supervised fine-tune, inference)
+
+Delivery                           FastAPI, Next.js with TradingView                       Section 13.2
+                                   Lightweight Charts, React Native
+                                   with Expo, WebAuthn and Argon2id,
+                                   Razorpay
+
+ DELIBERATELY ABSENT
+
+ No Kafka, no Kubernetes, no vector-database SaaS, no feature-store SaaS. Serving is one cached
+ snapshot, identical for every user, and the pipeline is two scheduled batches. An architecture
+ sized to its problem defends better than one sized to a job description.
+
+13.2 API, web and mobile
+       One API, two clients. FastAPI serves Lite, Pro and Max endpoint families. The Next.js
+       web app and the React Native (Expo) mobile app are two clients of the same API, not two
+       systems. Neither client holds decision logic.
+       Tiers are enforced on the server. A Lite token calling a Pro endpoint gets a 403 with no
+       body.
+
+       Charts. TradingView Lightweight Charts (Apache-2.0) in the web client.
+       Authentication. Passkeys (WebAuthn) with Argon2id for any stored secret. On mobile,
+       Face ID or the Android biometric prompt unlocks a device-held key locally. No biometric
+       data is ever sent to or stored on the server. Payments use Razorpay with UPI Autopay for
+       recurring INR, in test mode until the registration question is resolved.
+       Immutable signal log. Every published signal is written once and never edited. The
+       public paper-trading record is generated from this log.
+
+13.3 Mobile delivery
+Why Expo. Expo’s managed workflow handles code signing, store submission tooling (EAS
+Build and EAS Submit) and over-the-air updates without hand-built Xcode and Android Studio
+pipelines. For a small team shipping to two stores under a deadline, this reduces the surface
+where an AI coding agent can get something subtly wrong. Bare React Native remains an
+escape hatch.
+
+Store                                 Requirement                                             LYNX-specific consideration
+
+Apple App Store                       Apple Developer Program                                 LYNX names entry, target and stop-
+                                      enrolment. Review covers               loss. The finance-app guidelines
+                                      functionality, data use and financial- require a clear statement that
+                                      app scrutiny.                                           content is informational, not
+                                                                                              investment advice. It must be
+                                                                                              visible in the store listing itself, not
+                                                                                              only inside the app.
+
+Google Play                           Play Console account, Data Safety                       The declaration must state that the
+                                      form, financial-services content                        app does not execute trades and
+                                      declaration                                             does not give personalised
+                                                                                              investment advice. It is a distinct
+                                                                                              submission step, separate from the
+                                                                                              in-app disclaimer.
+
+Both                                  A privacy policy URL                                    It must state what is collected
+                                                                                              (authentication credentials and
+                                                                                              subscription status) and confirm
+                                                                                              there is no trade-execution
+                                                                                              capability.
+
+  THE SEBI RESEARCH ANALYST QUESTION
+
+  Payment in exchange for entry, target and stop-loss levels is the textbook form of a
+  recommendation, and SEBI Research Analyst registration may apply once money is involved.
+  Both stores require an explicit financial-content declaration at submission, so the question must
+  be resolved, not just documented, before either submission, not only before public launch. This
+  is an open risk (Section 16).
+
+Offline behaviour. LYNX publishes at most ten signals a day, generated once nightly. The
+mobile client caches the last published set and shows it with a visible timestamp instead of a
+blank screen. There is no offline computation: the model never runs on a device, so the rule that
+the model is the only decision-maker holds on every surface.
+
+Updates. JavaScript-layer changes (copy, UI fixes) ship over the air through Expo. Native-layer
+changes (new permissions or modules) still go through full store review.
+
+14. Environment and setup guide
+This section is the working checklist for bringing up a development machine. Paths and
+commands follow the repository as it exists; items marked later stage are not available yet.
+
+14.1 Prerequisites
+Item                                                               Needed for
+
+Python 3.12                                                        All backend code. CI also uses 3.12.
+
+Docker Desktop with Compose                                        Postgres, Redis and Neo4j
+
+Git                                                                Source control and CI
+
+CUDA-capable GPU (optional locally)                                Stage 22 supervised fine-tune and nightly inference.
+                                                                   Pretraining uses a cloud GPU.
+
+Kaggle and Google accounts                                         Cloud GPU runs, and BigQuery for GDELT (later stage)
+
+A coding assistant (Claude Code in the IDE)                        Development. It loads the project memory file
+                                                                   automatically.
+
+14.2 Repository layout (as it exists so far)
+
+ config.py                   canonical config: DATABASE_URL, EMBARGO_DAYS, paths, get_db_engine
+ docker-compose.yml          Postgres 16, Redis 7, Neo4j 5 (APOC)
+ CLAUDE.md                   binding project memory, auto-loaded by Claude Code
+ ARCHITECTURE.md             condensed working reference
+ docs/                       this document and its predecessors
+ signals/                    indicators.py, scorer.py   (Stage 9)
+ tests/                      test_indicators.py, test_scorer.py, test_universe_leakage.py
+ tests/invariants/           adversarial invariant tests (run by CI)
+ requirements/base.txt       base dependencies
+ data/raw/                   bhavcopy, delivery, fno_bhavcopy, announcements
+ data/processed/             corporate_actions.parquet, pit_features.parquet, checkpoints
+
+Ingestion and pipeline scripts (bhavcopy and delivery ingestion, corporate-action parsing,
+universe build, cost model, momentum baseline, index, FII/DII, USDINR and repo-rate loaders)
+sit alongside a shared ingestion module that provides the HTTP session, retry, atomic writes and
+the manifest.
+
+14.3 Bring-up steps
+      1. Clone and create an environment. Create a virtual environment with Python 3.12 and
+         install requirements/base.txt .
+      2. Create .env from the template. Secrets are read only through config.py . Nothing is
+         hardcoded.
+      3. Start services. Run docker compose up -d , then docker compose ps and confirm Postgres,
+         Redis and Neo4j report healthy. Services use development-only default passwords; change
+         them for any shared or hosted environment.
+      4. Run the test suites. python -m pytest tests/invariants/ -v runs the invariant suite.
+         python -m pytest runs everything. A pytest.ini makes the signals package importable.
+      5. Check data layout. data/raw/ and data/processed/ exist and match Section 5.4. Ingestion
+        is resumable: re-running skips completed dates.
+
+   6. Run a stage. Each stage has a passing check (Section 15) that is executed against real
+      row counts before the next stage starts.
+
+Service                  Container                              Port                             Used from
+
+PostgreSQL 16             lynx_postgres                         5432                             Point-in-time feature store
+                                                                                                 (about Stage 12 onward)
+
+Redis 7                   lynx_redis                            6379                             Snapshot cache
+
+Neo4j 5 Community         lynx_neo4j                            7474 (browser), 7687             Knowledge graph (Stage
+(APOC)                                                          (bolt)                           19 onward)
+
+14.4 Continuous integration
+A GitHub Actions workflow runs on every push and pull request to the main branch. It installs
+the base requirements, runs the invariant suite, and then fails loudly if no invariant tests
+were collected. A green run with zero tests would look like safety without providing any, so “no
+tests ran” is treated as a failure.
+
+14.5 Working conventions
+     Loguru for logging, never print() .
+     Tenacity for retries on any network or database call.
+     Checkpoint and resume for every batch pipeline over the full universe: progress is written
+     to data/processed/*_checkpoint.json after each symbol, so an interrupted run resumes.
+     Pure computation stays free of database and network dependencies where practical, so it
+     is unit-testable.
+     config.py is the only place a path, URL or credential is read. A new module that needs one
+     adds it there.
+     Every risky component gets an invariant test written before the implementation is
+     trusted.
+     Long crawls run detached in the background and write checkpoints, because processes
+     can be reaped under memory pressure.
+
+14.6 Working with coding agents
+Multiple AI tools may write the backend and the clients. Three habits keep this safe.
+
+      CLAUDE.md is binding. It loads automatically in every session and carries the forbidden
+     list. A request that conflicts with it is flagged, not silently followed.
+     One session per repository at a time. Concurrent sessions in one repository caused a
+     bulk file deletion and reaped background jobs earlier in the build. Sessions that must run
+     in parallel work in separate branches or worktrees.
+     Show diffs before commits, and keep the architecture document and CLAUDE.md in step
+     with each other. When they disagree, the canonical document wins and the other is stale.
+
+15. Build order and status
+
+15.1 Build order
+The order is 26 stages plus four new VANTA stages. Two orderings look wrong and are
+deliberate: the cost model comes at Stage 6, before features, because it gates the go/no-go at
+Stage 7; and the walk-forward harness comes at Stage 13, before the model it judges. Both
+make the project fail early rather than late. No stage starts before the previous stage’s check
+passes against real row counts.
+
+#                        Stage                                   Depends on                       Passing check
+
+1                        Environment, config,                                                     CUDA available, config
+                         canonical paths                                                          loads, no missing
+                                                                                                  variables, one database
+                                                                                                  path fixed
+
+2                        Repo scaffold, CI, invariant            1                                Compose comes up; the
+                         test skeleton                                                            empty suite passes in CI
+
+3                        Bhavcopy ingestion and                  2                                Row counts match the
+                         backfill                                                                 ticker times trading-day
+                                                                                                  product. The true start of
+                                                                                                  delivery data is measured
+                                                                                                  and documented.
+
+4                        Corporate action engine                 3                                No adjusted return outside
+                                                                                                  its band without an action
+                                                                                                  record
+
+5                        Universe and point-in-time              3, 4                             Per-year membership lists;
+                         constituents                                                             delisted names kept with
+                                                                                                  terminal values
+
+6                        Transaction cost model                  3                                Round-trip cost
+                                                                                                  computable for any
+                                                                                                  security on any date,
+                                                                                                  delivery and intraday
+
+7                        Momentum baseline                       4, 5, 6                          Positive net return means
+                         through costs: GO/NO-GO                                                  a real edge to pursue;
+                                                                                                  negative means widen the
+                                                                                                  horizon or tighten the
+                                                                                                  universe, not more model
+                                                                                                  capacity
+
+8                        Index and macro pipeline                3                                Nifty, Bank Nifty, India
+                                                                                                  VIX, repo, CPI, USDINR
+                                                                                                  populated
+
+9                        Indicators and                          4                                Indicator count matches
+                         deterministic scorer                                                     OHLCV count; scorer
+                                                                                                  returns a full audit
+                                                                                                  dictionary for a sample
+                                                                                                  ticker
+
+10                       India block: delivery, F&O,             3, 8                             Delivery validated against
+                         flows, pledging, circuits                                                the raw file; missingness
+                                                                                                  masked, never zero-filled
+
+11                       Override gates and                      10                               Gates fire correctly on
+                         circuit/ban filters                                                      known historical examples
+
+#     Stage                                   Depends on                       Passing check
+
+12    Point-in-time feature store             9, 10, 11                        A read as of date t returns
+                                                                               only what was knowable
+                                                                               before t
+
+13    Walk-forward harness                    12                               A deliberately leaky
+                                                                               configuration produces an
+                                                                               implausible IC and is
+                                                                               flagged. Adds label
+                                                                               purging.
+
+13A   VANTA label simulator                   4, 5, 6, 9, 10                   N1 to N4, N6 and N11
+                                                                               pass. Coverage report by
+                                                                               year. 20 sampled trades
+                                                                               reconcile with a hand
+                                                                               calculation.
+
+13B   Filtered regime                         8, 10                            N7 passes. Available from
+      posterior (minimal 3-                                                    the first date all four
+      state HMM, forward                                                       inputs exist (India VIX
+      recursion only)                                                          starts 2014-05-14) plus
+                                                                               warm-up.
+
+13C   VANTA selection gate                    13, 13A, 13B                     N5, N8 to N10 and N13
+                                                                               pass. On synthetic
+                                                                               exchangeable data,
+                                                                               realised FDR is at most q.
+
+13M   Milestone M1: GO/NO-                    7, 13A, 13C (13B for the         Pre-registered criteria in
+      GO #2                                   regime arm)                      Section 11.5
+
+14    Baselines on net labels, all            13M                              Rank IC, net return per
+      through the same gate:                                                   published signal and
+      A0, A1, B1 CatBoost                                                      realised FDR, with seed
+                                                                               and fold spread
+
+15    LightGBM lambdarank                     14                               Ranking objective isolated
+      (ablation A13)
+
+16    Announcement ingestion                  3                                Announcements ticker-
+      and entity resolution                                                    tagged, date range
+                                                                               verified
+
+17    GDELT BigQuery                          16                               Plausible volume per year;
+      extraction and NSE entity                                                entity-resolution precision
+      mapping                                                                  measured on a sample
+
+18    LLM extraction pipeline                 16                               Precision and recall per
+      and LoRA fine-tune                                                       event type against 500
+                                                                               hand-labelled articles
+
+19    Knowledge graph schema                  18                               Entities and edges
+      and writers                                                              queryable; every fact has
+                                                                               a source_span
+
+20    KG feature emission and                 19                               Every graph snapshot
+      graph edge derivation                                                    provably built from trailing
+                                                                               data only
+
+21    SSL pretraining with WFP                20                               Loss converges. Per-fold
+                                                                               temporal split asserted by
+                                                                               test. N14 passes. A18 run
+                                                                               on three folds, with time
+                                                                               per fold recorded.
+
+#    Stage                                   Depends on                       Passing check
+
+22   Encoders and VANTA                      21, 13A                          Trains within 4 GB. N10
+     ranker                                                                   passes. Beats B1 on net
+                                                                              return per published
+                                                                              signal, or the result is
+                                                                              reported as negative.
+
+23   Regime soft gating over                 22, 13B                          N7 holds end to end. A9
+     ranker heads                                                             reported.
+
+24   Gate integration on PRISM               23, 13C                          Realised FDR and
+     plus VANTA scores, with                                                  coverage by regime, per
+     ATR trade levels                                                         fold
+
+25   Ablations and era analysis              24                               All results with seed and
+                                                                              fold spread. A2, A3, A10,
+                                                                              A14, A16, A17 and B1
+                                                                              answered. Core frozen
+                                                                              after this.
+
+26   Pipeline, API, clients,                 25                               Ten unattended runs; tier
+     outcome loop, deployment                                                 checks; public paper-
+     (web and mobile)                                                         trading record live from
+                                                                              the immutable log; store
+                                                                              submission
+
+Build order and status (30 stages, dependency-ordered)
+
+Phase 0 Foundation
+
+ 1                       2
+ Env, conﬁg              Scaﬀold, CI
+
+Phase 1 Data foundation
+ 3                       4                          5                           6                                7
+ Bhavcopy ingest         Corp actions               Universe PIT                Cost model                       Momentum GO
+
+Phase 2 Features
+ 8                       9                          10                          11                               12
+ Index, macro            Indicators                 India block                 Override gates                   PIT store
+
+Phase 3 Harness, VANTA core, baselines
+
+ 13                      13A                        13B                         13C                              13M                         14               15
+ WF harness              Label sim                  Filtered HMM                Selection gate                   M1 GO/NO-GO                 Baselines+B1     LightGBM
+
+Phase 4 Language and knowledge
+ 16                      17                         18                          19                               20
+ Announcements           GDELT                      LLM extract                 KG schema                        KG features
+
+Phase 5 PRISM + VANTA model
+
+ 21                      22                         23                          24
+ SSL + WFP               Encoders+ranker            Soft gating                 Gate integr.
+
+Phase 6 Science and production
+ 25                      26
+ Ablations               API, apps, ops
+
+     built and veriﬁed                     built, rework / re-run pending             not started                                      VANTA stages (v5/v6)
+
+                                                                                     Build order and status
+
+15.2 Status snapshot (20 October 2026)
+This snapshot comes from the most recent build reports (no new stage report since 9 October).
+It should be re-verified in the repository before it is quoted as fact.
+
+Stage                                                            State
+
+1, 2                                                             Built and verified. Docker services healthy.
+
+3                                                                Ingestion built. A cleanup is under way and drives re-
+                                                                 runs of the stages that depend on it (4, 5, 8, 9, 10).
+
+4, 5                                                             Built. Re-run pending after the Stage 3 cleanup.
+
+6                                                                Built (date-versioned cost model).
+
+7                                                                Momentum baseline built; verdict was GO (about 4.6%
+                                                                 net annualised long-short decile spread, monthly
+                                                                 rebalance). The verdict is to be re-checked after the re-
+                                                                 runs.
+
+8, 9                                                             Built. Re-run pending. Stage 9 indicators and scorer
+                                                                 have unit tests.
+
+10                                                               Four of five acceptance checks pass. Open: the F&O
+                                                                 feature block is still missing, and the FII/DII flows have
+                                                                 no publication-timing evidence. That evidence cannot
+                                                                 be backfilled, because the monitor that records it is not
+                                                                 a daemon, so this item is documented as a known
+                                                                 limitation rather than closed. One historical F&O day
+                                                                 (2003-10-01) is excluded.
+
+11 to 26, 13A to 13M                                             Not started. No VANTA code is written until Stage
+                                                                 10 closes. Component specifications and invariant
+                                                                 tests (written before code) may be prepared in parallel
+                                                                 in docs/vanta/ and tests/invariants/ .
+
+15.3 Critical path
+Stages 1 to 25 are the decision path and constitute a complete dissertation without the product.
+The path to the first real evidence is: finish Stage 10, build Stages 11 and 12, then Stage 13 and
+the VANTA stages 13A (NEL), 13B (filtered HMM) and 13C (RW-CS with FCC), then M1. M1 is
+the earliest point at which the new decision layer meets real NSE data, and it uses momentum
+scores, so it needs no new model.
+
+15.4 Descope order
+If time compresses, cut in this order. Everything above the line remains a complete and
+defensible dissertation.
+
+     1. Intraday horizon (already outside VANTA v1; marked future work).
+     2. GDELT historical news, falling back to announcements only, which carry most of the signal
+        anyway.
+     3. Knowledge graph, keeping LLM extraction as flat features.
+     4. Multi-agent orchestration, falling back to a single extraction agent.
+
+The line: Stages 1 to 25 alone are a complete dissertation. Below it the science itself is being
+cut. The mobile app is no longer droppable; it is a supervisor-mandated deliverable.
+
+THE FAILURE MODE TO ACTUALLY EXPECT
+
+Not running out of time. Spending week 20 tuning an agent prompt while the cost model is
+unwritten. The decision path is the critical path; the agent and knowledge layers make it
+presentable. In that order.
+
+16. Risk register
+Risk                                       Severity                                                Mitigation
+
+No edge net of costs                       Critical                                                Cost model at Stage 6 and
+                                                                                                   momentum baseline at Stage 7
+                                                                                                   were built first. Gross-profitable and
+                                                                                                   net-dead is the normal outcome.
+                                                                                                   Fallbacks: longer horizon or tighter
+                                                                                                   universe, never more model
+                                                                                                   capacity.
+
+Synthetic VANTA results do not             High                                                    Treated as design evidence only. M1
+transfer                                                                                           and ablations A2, A3 and A10
+                                                                                                   decide.
+
+The FDR promise is read as a               High                                                    Stated everywhere as a target.
+guarantee                                                                                          Realised FDR by regime is reported
+                                                                                                   in backtests and in the live log.
+
+Silent leakage                             High                                                    Invariant tests N1 to N14 and the
+                                                                                                   catalogue in Section 12. An IC
+                                                                                                   above 0.10 is treated as a bug
+                                                                                                   report.
+
+Pretraining does not transfer              High                                                    A4 and A14 measure it directly. A
+                                                                                                   negative result is publishable. The
+                                                                                                   architecture degrades gracefully to
+                                                                                                   B1.
+
+Delivery data is shallow (from             High                                                    Measured at Stage 3. Per-fold
+September 2019)                                                                                    availability and era analysis turn it
+                                                                                                   into a finding.
+
+Label window limited by circuit-list       Medium                                                  Rows before the first hit list are
+coverage                                                                                           excluded from primary results.
+                                                                                                   Inferred bands are not used.
+
+Regime posterior starts in 2014            Medium                                                  The regime-weighted gate is
+                                                                                                   testable only from India VIX’s start
+                                                                                                   on disk. The age-only arm covers
+                                                                                                   the earlier window.
+
+Small effective calibration sample in      Medium                                                  Log the Kish effective sample size;
+rare regimes                                                                                       fall back to age-only weights below
+                                                                                                   the threshold.
+
+60-session calibration lag                 Medium                                                  Outcomes mature late, so the 52-
+                                                                                                   week window holds fewer matured
+                                                                                                   rows. Consider a horizon-specific
+                                                                                                   window.
+
+Free cloud GPU limits                      Medium                                                  Checkpoint every epoch and design
+                                                                                                   pretraining to resume. Budget one
+                                                                                                   paid GPU week if needed.
+
+Per-fold pretraining exceeds the           High                                                    From-scratch pretraining on every
+GPU budget                                                                                         fold is several hundred GPU-hours.
+                                                                                                   WFP (Section 8.1.1) warm-starts
+                                                                                                   later folds. If WFP fails A18,
+                                                                                                   headline PRISM results use fewer
+                                                                                                   folds, and that is reported.
+
+Risk                                     Severity                                                Mitigation
+
+A named component adds nothing           Medium                                                  Each component has a kill rule
+                                                                                                 (Section 9.0). Dropping one is a
+                                                                                                 reported result, not a failure of the
+                                                                                                 project.
+
+GDELT entity resolution is poor          Medium                                                  Announcements are pre-tagged and
+                                                                                                 carry most of the signal. GDELT
+                                                                                                 degrades to a co-mention edge
+                                                                                                 source.
+
+Extraction quality is low                Medium                                                  Measured at Stage 18 before the
+                                                                                                 graph is built on top. Restrict to
+                                                                                                 high-confidence event types if
+                                                                                                 needed.
+
+Scope overrun                            High                                                    Descope order in Section 15.4.
+
+Index licensing                          Medium                                                  Sensex is BSE IP; Nifty and Bank
+                                                                                                 Nifty are NSE Indices IP. Review
+                                                                                                 display and redistribution terms
+                                                                                                 before public launch.
+
+Paid tiers against SEBI Research         Low likelihood, high impact                             Build payments in test mode.
+Analyst rules                                                                                    Resolve registration before any
+                                                                                                 store submission.
+
+Coding-agent drift and concurrent-       Medium                                                  CLAUDE.md forbidden list, one
+session accidents                                                                                session per repository, diffs shown
+                                                                                                 before commits.
+
+17. Open decisions
+ 1. Horizon scope. Confirm that VANTA v1 covers 5, 20 and 60 sessions and that intraday is
+    future work (Section 2.5).
+ 2. Max-tier ungated list. Recommendation: show it as a watchlist without entry, stop or
+    target.
+ 3. Fallback threshold. Kish effective sample size below about 200 triggers age-only
+    weights. The number is a proposal.
+ 4. Horizon-specific calibration window for the 60-session horizon.
+ 5. Incumbent calibration. A separate calibration on incumbent net returns is a later
+    option. VANTA v1 runs the gate on full-cost returns for all names, which is conservative
+    for incumbents.
+ 6. SEBI Research Analyst registration before store submission.
+ 7. Weighted-selection pruning (Jin and Candès 2023b) as ablation A16(d).
+ 8. Number of PRISM folds. All folds for baselines and M1. Whether the full PRISM model
+    runs on every price fold or only on the folds where the regime inputs exist (2014 onward)
+    depends on WFP’s measured cost at Stage 21.
+ 9. Decay scale τ grid for RW-CS: {13, 26, 52} weeks is proposed.
+
+Appendix A. Data contracts
+All tables are Parquet and append-only. Every row carries the version tags in A.4.
+
+A.1 vanta_labels , partitioned by horizon and year
+Column                               Type                                                    Notes
+
+ symbol                              str
+
+ decision_date                       date                                                    t. Features and ATR as of t’s close.
+
+ horizon                             int                                                     h in sessions: 5, 20 or 60
+
+ label_version                       str                                                     Encodes k_s, k_t, tie rule and lock
+                                                                                             rules
+
+ cost_model_version                  str                                                     Stage 6 rates version used
+
+ entry_date                          date                                                    t+1
+
+ entry_price_raw                     float                                                   Raw open. NaN if no fill.
+
+ fill_status                         enum                                                    FILLED, NO_FILL_UPPER_LOCK,
+                                                                                             NO_FILL_NO_TRADE, NO_DATA
+
+ atr_pct                             float                                                   ATR(14) divided by close at t
+
+ k_s , k_t                           float                                                   Stop and target multiples
+
+ stop_price , target_price           float
+
+ exit_date , exit_price              date, float
+
+ exit_reason                         enum                                                    TARGET, STOP, STOP_GAP,
+                                                                                             STOP_DELAYED_LOWER_LOCK,
+                                                                                             TIME, DELISTED
+
+ lock_delay_sessions                 int                                                     0 unless the exit was delayed by a
+                                                                                             lower lock
+
+ lock_source                         enum                                                    HIT_LIST or NONE. NONE rows are
+                                                                                             excluded from primary results.
+
+ gross_return                        float                                                   Adjusted-price return
+
+ cost_entry , cost_exit ,            float                                                   Stored separately
+ cost_impact
+
+ y_net                               float                                                   Gross minus all costs (full round
+                                                                                             trip)
+
+ label_end_date                      date                                                    Equals exit_date . Used for
+                                                                                             purging.
+
+Winsorisation and the gain g are computed at training time from fold-only statistics and are
+never stored as fixed columns.
+
+A.2 vanta_calibration
+Column                               Type                                                    Notes
+
+ decision_date                       date                                                    When the score was produced
+
+ symbol , horizon
+
+ score                               float                                                   Out-of-sample score
+
+Column                               Type                                                    Notes
+
+ model_version                       str                                                     Scores from different versions are
+                                                                                             not mixed
+
+ fold_id                             str
+
+ is_oos                              bool                                                    Must be true
+
+ regime_posterior                    float[3]                                                Filtered π at decision_date
+
+ hmm_version                         str
+
+ y_net                               float                                                   Null until matured
+
+ matured_at                          timestamp                                               Label end close plus publication lag.
+                                                                                             Null until matured.
+
+ candidate_filter_version            str                                                     Same override-gate filter as the test
+                                                                                             candidates
+
+Query rule at decision date T: matured_at <= T and decision_date >= T - 52 weeks and
+model_version == current and candidate_filter_version == current and is_oos . If the current
+model is newly trained, its out-of-fold scores for the past 52 weeks are written before the gate
+runs; otherwise the calibration rows would be scored by a different model than the test rows.
+
+A.3 vanta_gate_log , immutable, one row per (decision date,
+candidate)
+Per row: decision_date , symbol , horizon , score , p_value , bh_threshold , in_bh_set , published ,
+cap_binding , q , n_calibration , effective_n (Kish effective sample size), and all version tags.
+Outcome fields ( y_net , lost ) are added once matured. Realised FDR and the pooled loss share
+are computed from this table only.
+
+A.4 Version tags
+Format: {component}@{fold_id}:{train_end}:{git_sha}:{config_hash} , for example vanta-
+ranker@f07:2018-12-31:a1b2c3d:9f2e01 . Tagged components: label_version , cost_model_version ,
+encoder_version (including the WFP parent checkpoint), model_version (the ranker), hmm_version ,
+gate_version (q, cap, decay scale τ, distance) and candidate_filter_version . Every artifact is
+registered in MLflow with these tags, so a gate decision is reproducible from its log row alone.
+
+Appendix B. Decision log
+Decision                                 Why                                                     Replaced
+
+Bhavcopy, not yfinance, is the price     yfinance drops delivery data and                        The earlier yfinance plan
+backbone                                 mis-adjusts Indian corporate actions
+
+Rolling, not expanding, walk-forward Indian market structure broke                               Expanding window
+                                     repeatedly
+
+Embargo equals the label horizon,        A 2-day embargo on a 3-day label                        A constant 2-day embargo
+per horizon                              leaks
+
+Cost model built before features         The largest risk is no edge net of                      Costs added late
+(Stage 6)                                costs
+
+FinBERT replaced by a structured         Domain concepts and lossy scalar                        Per-ticker sentiment scalar
+extractor                                output
+
+Qwen3-4B as the extractor                Fits the 4 GB local card for inference                  Earlier 8B options
+
+Mobile app is mandatory                  Supervisor requirement at the                           Mobile as first descope item
+                                         Phase I presentation
+
+Net executable labels                    The product is judged on money                          Sector-demeaned forward-return
+                                         after costs                                             rank
+
+Volatility-normalised ListNet            Plain top-heavy ranking favours                         LambdaLoss with NDCG
+                                         lottery stocks
+
+Conformal selection with BH at q =       The per-stock lower bound almost                        Per-stock conformal lower bound
+0.3                                      never cleared costs, and it                             above cost
+                                         controlled the wrong error
+
+Soft regime gating by filtered           Posterior-weighted rather than hard                     Hard-routed regime heads
+posterior                                routing, with no learned network
+
+ATR-multiple published levels            The label must describe the                             Quantile-head levels (now display
+                                         published trade                                         only)
+
+Incumbency handled at accounting,        Avoids a circular, non-stationary                       Incumbency baked into labels
+not in labels                            target
+
+Filtered HMM pulled forward to           The gate needs it before the full                       Regime model at Stage 23
+Stage 13B                                model exists
+
+The learned “cash” item dropped          It never abstained in simulation; the                   A cash item inside the ranking
+                                         gate does that job
+
+q described as a target, not a           Exchangeability fails, weights are                      Language implying a guarantee
+theorem                                  data-dependent, BH on weighted p-
+                                         values is outside the theorems
+
+VANTA defined as a named pipeline        The name covers the combination;                        VANTA described loosely as “an
+of four components (NEL, VN-             each part keeps its original citation;                  algorithm”
+ListNet, RW-CS, FCC)                     each is tested and ablated
+                                         separately
+
+WFP warm-started walk-forward            From-scratch pretraining on every                       One from-scratch pretraining run
+pretraining                              fold did not fit the free GPU budget                    per fold
+
+τ chosen on validation folds             A fixed 26-week decay was an                            τ fixed at 26
+                                         untested constant
+
+Decision                              Why                                                     Replaced
+
+“Gate-first inference” rejected       Filtering stocks out before PRISM                       Proposed during the v6 review
+                                      would remove them as context
+                                      nodes from the graph network and
+                                      change every neighbour’s
+                                      representation. The only saving left
+                                      (SHAP and narration) already
+                                      applies to published names only.
+
+Appendix C. Glossary
+Term                                                              Meaning
+
+ATR                                                               Average true range: a measure of a stock’s typical
+                                                                  daily price movement. Stops and targets are set as
+                                                                  multiples of it.
+
+Bhavcopy                                                          NSE’s end-of-day price and volume file
+
+BH                                                                Benjamini-Hochberg: a procedure that selects
+                                                                  hypotheses while controlling the false-discovery rate
+
+Circuit limit                                                     The daily price band within which a stock may trade. A
+                                                                  stock at its upper circuit can have buyers but no
+                                                                  sellers.
+
+Conformal prediction                                              A method that turns past errors into calibrated
+                                                                  statements about new predictions
+
+Delivery %                                                        Share of traded volume that is actually delivered rather
+                                                                  than squared off within the day
+
+Embargo and purging                                               Removing training rows near the test window, so that
+                                                                  labels cannot overlap it
+
+FCC                                                               Full-candidate calibration: the rule that the gate
+                                                                  calibrates on every scored, matured candidate, not
+                                                                  only published ones
+
+FDR                                                               False-discovery rate: the expected share of selections
+                                                                  that are wrong. Here, the share of published signals
+                                                                  that lose after cost.
+
+Filtered and smoothed posterior                                   Filtered uses data up to now. Smoothed also uses the
+                                                                  future and is forbidden in LYNX.
+
+Kish effective sample size                                        (Σw)² / Σw²: how many equally weighted samples a
+                                                                  weighted set is worth
+
+ListNet                                                           A ranking loss defined over a whole ranked list
+
+Net executable label (NEL)                                        The return of a simulated, publishable trade after all
+                                                                  costs
+
+PIT                                                               Point-in-time: data restricted to what was knowable on
+                                                                  a given date
+
+R-GAT                                                             Relational graph attention network
+
+RW-CS                                                             Regime-weighted conformal selection: the VANTA gate,
+                                                                  with calibration weights from recency and the filtered
+                                                                  regime posterior
+
+Rank IC                                                           Rank correlation between predicted and realised cross-
+                                                                  sectional returns
+
+SSL                                                               Self-supervised learning: learning from the data itself
+                                                                  without labels
+
+STT                                                               Securities Transaction Tax
+
+VN-ListNet                                                        ListNet with a volatility-normalised gain and soft
+                                                                  regime gating: the VANTA ranker
+
+WFP                                                               Warm-started walk-forward pretraining: each fold’s
+                                                                  encoder continues from the previous fold’s checkpoint
+
+Walk-forward                                                      Evaluation that trains on the past and tests on the next
+                                                                  unseen period, repeatedly
+
+Appendix D. References
+     Barber, R. F., Candès, E. J., Ramdas, A., and Tibshirani, R. J. (2023). Conformal prediction
+     beyond exchangeability. Annals of Statistics, 51(2), 816-845.
+     Benjamini, Y., and Hochberg, Y. (1995). Controlling the false discovery rate: a practical
+     and powerful approach to multiple testing. Journal of the Royal Statistical Society, Series
+     B, 57(1), 289-300.
+     Cao, Z., Qin, T., Liu, T.-Y., Tsai, M.-F., and Li, H. (2007). Learning to rank: from pairwise
+     approach to listwise approach (ListNet). Proceedings of ICML 2007.
+     Jin, Y., and Candès, E. J. (2023a). Selection by prediction with conformal p-values. Journal
+     of Machine Learning Research, 24(244), 1-41.
+     Jin, Y., and Candès, E. J. (2023b). Model-free selective inference under covariate shift via
+     weighted conformal p-values. arXiv:2307.09291.
+     Gururangan, S., Marasović, A., Swayamdipta, S., Lo, K., Beltagy, I., Downey, D., and Smith,
+     N. A. (2020). Don’t stop pretraining: adapt language models to domains and tasks.
+     Proceedings of ACL 2020.
+     Kato, M. (2024). Conformal predictive portfolio selection. arXiv:2410.16333.
+     Kaya and Nguyen, K. (2025). Conformal prediction for reliable stock selections.
+     Proceedings of Machine Learning Research, 266.
+     López de Prado, M. (2018). Advances in Financial Machine Learning. Wiley. (Triple-barrier
+     labelling, Ch. 3; purging and embargo, Ch. 7.)
+     Luce, R. D. (1959). Individual Choice Behavior. Wiley. Plackett, R. L. (1975). The analysis
+     of permutations. Applied Statistics, 24(2), 193-202.
+     Prokhorenkova, L., Gusev, G., Vorobev, A., Dorogush, A. V., and Gulin, A. (2018). CatBoost:
+     unbiased boosting with categorical features. NeurIPS 2018.
+
+How each component relates to prior art. NEL extends triple-barrier labelling with Indian
+circuit-lock rules, stock-specific costs and an executable-trade definition. VN-ListNet applies
+ListNet and Plackett-Luce with a volatility-normalised gain. RW-CS applies conformal selection
+with time- and regime-weighted calibration in the spirit of Barber et al. FCC is standard
+conformal practice made into a tested rule. WFP applies continued pretraining to a leak-free
+walk-forward chain. The claim is limited to the combination, evaluated on NSE equities.
+
