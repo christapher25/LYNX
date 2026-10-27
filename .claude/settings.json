@@ -1,0 +1,57 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(pytest *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(docker compose ps *)",
+      "PowerShell(python -m pytest *)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff *)",
+      "PowerShell(git log *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(rm -rf *)",
+      "PowerShell(git push *)",
+      "PowerShell(git reset --hard *)",
+      "PowerShell(git clean *)",
+      "PowerShell(Remove-Item *)"
+    ]
+  },
+  "hooks": {
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/task_completed.py"],
+            "timeout": 300,
+            "statusMessage": "Running invariant tests before closing the task..."
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/teammate_idle.py"],
+            "timeout": 300,
+            "statusMessage": "Checking the teammate's work before it goes idle..."
+          }
+        ]
+      }
+    ]
+  }
+}
