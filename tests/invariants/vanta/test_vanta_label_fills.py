@@ -192,6 +192,57 @@ def check_n4(sim):
     assert r["exit_price"] == 98
 
 
+def check_n4_gap_down_lock(sim):
+    """N4 (gap-down rule, user decision 2026-10-29): a gap-down session (open <= stop) that is itself lower-locked exits at the
+    close of the first non-locked session (STOP_DELAYED_LOWER_LOCK, delay recorded); an unlocked gap-down exits at the open
+    (STOP_GAP, delay 0)."""
+    # gap day 2 opens 90 <= stop 98 and is locked (lower hit, close == low); day 3 also locked; day 4 not -> exit d+2 close
+    locked_gap = [T_DAY, ENTRY_DAY, (90, 90, 88, 88), (85, 85, 83, 83), (84, 87, 83.5, 86), FLAT]
+    bars, r = _run(sim, locked_gap, lower=[2, 3])
+    assert r["exit_reason"] == "STOP_DELAYED_LOWER_LOCK"
+    assert r["exit_price"] == 86 and r["exit_date"] == bars.index[4]
+    assert r["lock_delay_sessions"] == 2
+    assert r["gross_return"] == pytest.approx(86 / 100 - 1)
+
+    # lock detection uses RAW prices: adjusted rounding noise (adj close != adj low) must not hide the lock on the gap day
+    adj = [tuple(x * 0.5 for x in b) for b in locked_gap]
+    adj[2] = (45.0, 45.0, 44.0, 44.01)
+    adj[3] = (42.5, 42.5, 41.5, 41.51)
+    bars, r = _run(sim, locked_gap, lower=[2, 3], adj_ohlc=adj, atr=1.0)
+    assert r["exit_reason"] == "STOP_DELAYED_LOWER_LOCK" and r["lock_delay_sessions"] == 2
+    assert r["exit_date"] == bars.index[4]
+    assert r["gross_return"] == pytest.approx(43 / 50 - 1)
+
+    # only the gap day locked -> next session's close, delay 1
+    bars, r = _run(sim, [T_DAY, ENTRY_DAY, (90, 90, 88, 88), (89, 92, 88.5, 91), FLAT, FLAT], lower=[2])
+    assert r["exit_reason"] == "STOP_DELAYED_LOWER_LOCK" and r["lock_delay_sessions"] == 1
+    assert r["exit_price"] == 91 and r["exit_date"] == bars.index[3]
+
+    # same gap, NOT locked (no lower hit): fills at the open, STOP_GAP, no delay
+    bars, r = _run(sim, locked_gap, lower=[])
+    assert r["exit_reason"] == "STOP_GAP" and r["lock_delay_sessions"] == 0
+    assert r["exit_price"] == 90 and r["exit_date"] == bars.index[2]
+
+    # on the hit list but close != low -> not locked -> STOP_GAP at the open
+    bars, r = _run(sim, [T_DAY, ENTRY_DAY, (90, 91, 88, 90), FLAT, FLAT, FLAT], lower=[2])
+    assert r["exit_reason"] == "STOP_GAP" and r["exit_price"] == 90 and r["lock_delay_sessions"] == 0
+
+
+def test_n4_gap_down_lock_real():
+    sim = pytest.importorskip("vanta.labels").simulate_trade
+    check_n4_gap_down_lock(sim)
+
+
+def test_n4_gap_down_lock_reference_toy_passes():
+    check_n4_gap_down_lock(toy())
+
+
+@pytest.mark.parametrize("bug", ["gap_ignores_lock", "delay_unlocked_gap", "lock_on_adjusted"])
+def test_n4_gap_down_lock_broken_toy_fails(bug):
+    with pytest.raises(AssertionError):
+        check_n4_gap_down_lock(toy(bug))
+
+
 def test_n4_real():
     sim = pytest.importorskip("vanta.labels").simulate_trade
     check_n4(sim)

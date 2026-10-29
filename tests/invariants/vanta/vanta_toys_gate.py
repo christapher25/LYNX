@@ -111,7 +111,7 @@ def run_gate(cands, cal, T, pi_T, *, model_version, candidate_filter_version, ta
     out = cands.reset_index(drop=True).copy()
     out["p_value"], out["in_bh_set"] = p, in_bh
     out["bh_threshold"] = q * k / m if k else float("nan")
-    # Tie-break direction (higher score first) is our reading: the spec says only "ties broken by score".
+    # Tie-break direction (higher score first) is user-confirmed 2026-10-27 (decisions log Q4); the spec says only "ties broken by score".
     order = sorted(range(m), key=lambda i: (p[i], -out["score"].iloc[i] if "tie_lowest_score" not in bugs else out["score"].iloc[i]))
     if "published_not_subset_of_bh" in bugs:
         pool = order

@@ -24,7 +24,8 @@ For every (stock i, decision date t) the system simulates the exact trade that w
 |---|---|
 | Decision time | After the close of t. The weekly decision date is the last session of the week. |
 | Entry | Raw open of session t+1. **No fill** if the stock opens locked at its upper circuit: the symbol is on that day's price-band hit list as an **upper** hit **and** raw open equals raw high. |
-| Stop | Entry minus k_s × ATR(14) at t. If price gaps through the stop at the open, the fill is at the **open**. |
+| Stop | Entry minus k_s × ATR(14) at t. If price gaps through the stop at the open, the fill is at the **open** (exception: see next row, gap-down into a lock). |
+| Gap-down into a lock | Resolves the Stop and Lower-circuit lock rows (user decision 2026-10-29). If the gap-down session (open <= stop) is itself lower-locked, the exit is at the close of the first session that is not lower-locked, `exit_reason = STOP_DELAYED_LOWER_LOCK`, delay recorded. If the gap-down session is not locked, the exit is at the open, `exit_reason = STOP_GAP`. |
 | Target | Entry plus k_t × ATR(14) at t. If price gaps through the target, the fill is at the **target** (conservative, no windfall). |
 | Same-day ambiguity | If stop and target both sit inside one day's range, assume the **stop** hit first. |
 | Lower-circuit lock | A session is lower-locked at close if the symbol is on the hit list as a **lower** hit and raw close equals raw low. A stop triggered inside a lock exits at the **close of the first session that is not lower-locked**, and the delay is recorded. |
@@ -84,7 +85,7 @@ Published levels are the same ATR multiples as the labels: entry at next open, s
 | N1 | No fill on a locked open | A day on the hit list as upper with open equal to high gives `NO_FILL_UPPER_LOCK`, no exit price and no payoff. |
 | N2 | Stops respect lower-circuit locks | Stop triggers on day d. Days d and d+1 are lower-locked at close, d+2 is not. Exit is at d+2's close with `STOP_DELAYED_LOWER_LOCK` and a delay of 2. |
 | N3 | Same-day ambiguity resolves to the stop | Both levels inside one day's range gives exit at the stop. |
-| N4 | Gap fills | A gap below the stop fills at the open. A gap above the target fills at the target. |
+| N4 | Gap fills | A gap below the stop fills at the open. A gap above the target fills at the target. Exception: a gap-down session that is itself lower-locked exits at the first non-locked close (`STOP_DELAYED_LOWER_LOCK`), see Gap-down into a lock. |
 | N5 | The calibration set never holds an unmatured outcome | Every calibration row has `matured_at ≤ T`. An injected row with `matured_at = T+1` is caught. Adding outcomes after T never changes p-values at T. |
 | N6 | Labels use the cost model of the trade date | Output changes across a known STT rate-change date. |
 | N7 | Regime weights use filtered posteriors | The posterior at t computed on data up to t equals the posterior computed on the full series. Appending the future changes nothing. |

@@ -96,6 +96,15 @@ def simulate_trade(symbol, bars, decision_date, horizon, k_s, k_t, atr, hits, hi
         op, hi, lo = bars["open"].iloc[j], bars["high"].iloc[j], bars["low"].iloc[j]
         gap = j > e
         if gap and op <= stop:
+            locked_gap = lower_locked_close(j) and "gap_ignores_lock" not in _bugs
+            if "delay_unlocked_gap" in _bugs:
+                locked_gap = True  # bug: every gap-down is treated as locked (exits at a close, relabelled)
+            if locked_gap:
+                k = j
+                while (lower_locked_close(k) and k < len(idx) - 1):
+                    k += 1
+                exit_j, exit_px, reason, delay = k, bars["close"].iloc[k], "STOP_DELAYED_LOWER_LOCK", k - j
+                break
             px = stop if "gap_stop_at_stop" in _bugs else op
             exit_j, exit_px, reason = j, px, "STOP_GAP"
             break

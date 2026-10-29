@@ -125,7 +125,7 @@ def _gate_cal(n_cal=100):
 
 
 def check_n13_selection(api):
-    # NOTE: the spec says only "ties broken by score"; HIGHER score first is our reading (to be confirmed with the user).
+    # NOTE: the spec says only "ties broken by score"; HIGHER score first (user-confirmed 2026-10-27, decisions log Q4).
     """N13: published subset of BH set, at most 10, ties by higher score, cap_binding logged; zero published is valid."""
     cal = _gate_cal()
 
