@@ -13,8 +13,8 @@ Tick a row when accepted: `[x] 2026-10-29 · a1b2c3d`.
 | 5 | [x] 2026-10-29 · 717997d · PARTIAL: ban + circuit gates only (others need later-stage inputs or thresholds) | **Stage 11 override gates** and circuit/ban filters | 2 | data-engineer | Gates fire correctly on known historical examples (a verifier script); invariants green | — |
 | 6 | [x] 2026-10-29 · 9b29c1b | **Stage 13A NEL label simulator** | 2, 3, 4 | quant-engineer | N1–N4, N6, N11 un-skipped and passing; coverage report by year; reviewer reconciles 20 sampled trades by hand | — |
 | 7 | [x] 2026-10-29 · ed6abfe | **Stage 13B filtered regime posterior** (3-state HMM, forward recursion only) | 2, 4 | quant-engineer | N7 passes; posterior available from 2014-05-14 plus warm-up | — |
-| 8 | [x] 2026-10-29 · PENDING_HASH | **Stage 12 point-in-time feature store** | 5 | data-engineer | A read as of date t returns only what was knowable before t (invariant test) | — |
-| 9 | [ ] | **Stage 13 walk-forward harness** with label purging | 8 | quant-engineer | A deliberately leaky configuration produces an implausible IC and is flagged; N11 holds | — |
+| 8 | [x] 2026-10-29 · e790cfb | **Stage 12 point-in-time feature store** | 5 | data-engineer | A read as of date t returns only what was knowable before t (invariant test) | — |
+| 9 | [x] 2026-10-29 · PENDING_HASH | **Stage 13 walk-forward harness** with label purging | 8 | quant-engineer | A deliberately leaky configuration produces an implausible IC and is flagged; N11 holds | — |
 | 10 | [ ] | **Stage 13C selection gate** (RW-CS with FCC) | 9, 6, 7 | quant-engineer | N5, N8–N10, N13 pass; on synthetic exchangeable data realised FDR ≤ q | — |
 | 11 | [ ] | **Stage 13M Milestone M1 run** (momentum scores through NEL and the gate) and its results report | 10 | lead (job runner) | Run completes; report states each pre-registered GO criterion with its number | **STOP** (GO/NO-GO is the user's call) |
 
