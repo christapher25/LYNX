@@ -1011,6 +1011,15 @@ Lower-circuit lock                                              A session is low
                                                                 first session that is not lower-locked, and the delay is
                                                                 recorded.
 
+                                                                AMENDMENT 2026-10-29 (user decision): if the stop gap session
+                                                                (open at or below the stop) is itself lower-locked, the fill
+                                                                is NOT at the open; the trade exits at the close of the first
+                                                                session that is not lower-locked, exit_reason
+                                                                STOP_DELAYED_LOWER_LOCK, delay recorded. An unlocked gap
+                                                                exits at the open (STOP_GAP). Lock is close-based as above.
+                                                                Authoritative text: docs/vanta/VANTA_SPEC.md (Stop and
+                                                                Gap-down into a lock rows, N4). The PDF is not regenerated.
+
 Time exit                                                       Close of session t+h
 
 Corporate actions                                               Returns use Stage 4 adjusted prices. Lock detection
