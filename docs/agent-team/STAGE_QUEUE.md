@@ -11,8 +11,8 @@ Tick a row when accepted: `[x] 2026-10-29 · a1b2c3d`.
 | 3 | [x] 2026-10-29 · 4a4bb16 | **Gap-down rule**: add the lower-locked gap-down rule to `docs/vanta/VANTA_SPEC.md` and its invariant test | — | test-writer | New test passes against a toy implementation and fails against a broken one; invariants green | — |
 | 4 | [x] 2026-10-29 · 807bc12 | **INTERFACES.md**: record every function name and signature the VANTA tests import | — | test-writer | File lists every import used in `tests/invariants/vanta/` | — |
 | 5 | [ ] | **Stage 11 override gates** and circuit/ban filters | 2 | data-engineer | Gates fire correctly on known historical examples (a verifier script); invariants green | — |
-| 6 | [ ] | **Stage 13A NEL label simulator** | 2, 3, 4 | quant-engineer | N1–N4, N6, N11 un-skipped and passing; coverage report by year; reviewer reconciles 20 sampled trades by hand | — |
-| 7 | [x] 2026-10-29 · PENDING_HASH | **Stage 13B filtered regime posterior** (3-state HMM, forward recursion only) | 2, 4 | quant-engineer | N7 passes; posterior available from 2014-05-14 plus warm-up | — |
+| 6 | [x] 2026-10-29 · PENDING_HASH | **Stage 13A NEL label simulator** | 2, 3, 4 | quant-engineer | N1–N4, N6, N11 un-skipped and passing; coverage report by year; reviewer reconciles 20 sampled trades by hand | — |
+| 7 | [x] 2026-10-29 · ed6abfe | **Stage 13B filtered regime posterior** (3-state HMM, forward recursion only) | 2, 4 | quant-engineer | N7 passes; posterior available from 2014-05-14 plus warm-up | — |
 | 8 | [ ] | **Stage 12 point-in-time feature store** | 5 | data-engineer | A read as of date t returns only what was knowable before t (invariant test) | — |
 | 9 | [ ] | **Stage 13 walk-forward harness** with label purging | 8 | quant-engineer | A deliberately leaky configuration produces an implausible IC and is flagged; N11 holds | — |
 | 10 | [ ] | **Stage 13C selection gate** (RW-CS with FCC) | 9, 6, 7 | quant-engineer | N5, N8–N10, N13 pass; on synthetic exchangeable data realised FDR ≤ q | — |
