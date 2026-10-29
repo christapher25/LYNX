@@ -24,12 +24,14 @@ from scripts import (
     verify_stage10_delivery,
     verify_stage10_flows,
     verify_stage10_fno,
+    verify_stage10_fno_features,
     verify_stage10_pledging,
 )
 
 SUBBLOCKS = [
     ("delivery", verify_stage10_delivery),
     ("F&O", verify_stage10_fno),
+    ("F&O features", verify_stage10_fno_features),
     ("flows", verify_stage10_flows),
     ("pledging", verify_stage10_pledging),
     ("circuits", verify_stage10_circuits),
@@ -53,7 +55,7 @@ def main() -> int:
     if failed:
         logger.error(f"Stage 10 checkpoint FAILED: {failed}")
         return 1
-    logger.success("Stage 10 checkpoint PASSED: delivery, F&O, flows, pledging, circuits")
+    logger.success("Stage 10 checkpoint PASSED: delivery, F&O, F&O features, flows, pledging, circuits")
     return 0
 
 

@@ -6,9 +6,9 @@ Tick a row when accepted: `[x] 2026-10-29 · a1b2c3d`.
 
 | # | Done | Row | Depends on | Owner | Passing check | STOP? |
 |---|---|---|---|---|---|---|
-| 1 | [ ] | **Stage 10 F&O block**: run the `fno_features` job (full history), then accept and commit the fno files | — | lead (job runner) | `verify_stage10_fno_features` passes on the full output; `verify_stage10` shows the F&O check passing (flows stays a known limitation); invariants green | — |
-| 2 | [ ] | **Decision: count Stage 10 as closed** with the FII/DII publication-timing gap documented as a known limitation, so VANTA implementation may start | 1 | user | User writes the decision in `logs/agent_team_decisions.md` and ticks this row | **STOP** |
-| 3 | [x] 2026-10-29 · PENDING_HASH | **Gap-down rule**: add the lower-locked gap-down rule to `docs/vanta/VANTA_SPEC.md` and its invariant test | — | test-writer | New test passes against a toy implementation and fails against a broken one; invariants green | — |
+| 1 | [x] 2026-10-29 · PENDING_HASH | **Stage 10 F&O block**: run the `fno_features` job (full history), then accept and commit the fno files | — | lead (job runner) | `verify_stage10_fno_features` passes on the full output; `verify_stage10` shows the F&O check passing (flows stays a known limitation); invariants green | — |
+| 2 | [x] 2026-10-29 · PENDING_HASH (user decision, flows lag confirmed) | **Decision: count Stage 10 as closed** with the FII/DII publication-timing gap documented as a known limitation, so VANTA implementation may start | 1 | user | User writes the decision in `logs/agent_team_decisions.md` and ticks this row | **STOP** |
+| 3 | [x] 2026-10-29 · 4a4bb16 | **Gap-down rule**: add the lower-locked gap-down rule to `docs/vanta/VANTA_SPEC.md` and its invariant test | — | test-writer | New test passes against a toy implementation and fails against a broken one; invariants green | — |
 | 4 | [x] 2026-10-29 · 807bc12 | **INTERFACES.md**: record every function name and signature the VANTA tests import | — | test-writer | File lists every import used in `tests/invariants/vanta/` | — |
 | 5 | [ ] | **Stage 11 override gates** and circuit/ban filters | 2 | data-engineer | Gates fire correctly on known historical examples (a verifier script); invariants green | — |
 | 6 | [ ] | **Stage 13A NEL label simulator** | 2, 3, 4 | quant-engineer | N1–N4, N6, N11 un-skipped and passing; coverage report by year; reviewer reconciles 20 sampled trades by hand | — |

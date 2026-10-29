@@ -57,6 +57,8 @@ PLEDGING_FEATURES_CHECKPOINT = PROCESSED_DATA_DIR / "pledging_features_checkpoin
 CIRCUIT_FEATURES_DIR = FEATURE_BLOCKS_DIR / "circuits"
 CIRCUIT_FEATURES_CHECKPOINT = PROCESSED_DATA_DIR / "circuit_features_checkpoint.json"
 DELIVERY_FEATURES_CHECKPOINT = PROCESSED_DATA_DIR / "delivery_features_checkpoint.json"
+FNO_FEATURES_DIR = FEATURE_BLOCKS_DIR / "fno"
+FNO_FEATURES_CHECKPOINT = PROCESSED_DATA_DIR / "fno_features_checkpoint.json"
 
 # ── Database ─────────────────────────────────────────────────────
 # One path. Every module reads this, none construct their own.
