@@ -1,0 +1,6 @@
+
+# Append these lines to LYNX_V1\.gitattributes (create the file if it does not exist).
+# Git hooks must keep LF line endings, or Git for Windows' sh cannot run them.
+.githooks/* text eol=lf
+*.sh text eol=lf
+

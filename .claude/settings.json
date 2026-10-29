@@ -1,16 +1,19 @@
 {
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
   },
   "permissions": {
     "allow": [
       "Bash(python -m pytest *)",
       "Bash(pytest *)",
+      "Bash(python scripts/run_job.py *)",
       "Bash(git status *)",
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(docker compose ps *)",
       "PowerShell(python -m pytest *)",
+      "PowerShell(python scripts/run_job.py *)",
       "PowerShell(git status *)",
       "PowerShell(git diff *)",
       "PowerShell(git log *)"
@@ -19,14 +22,29 @@
       "Bash(git push *)",
       "Bash(git reset --hard *)",
       "Bash(git clean *)",
+      "Bash(git rebase *)",
       "Bash(rm -rf *)",
       "PowerShell(git push *)",
       "PowerShell(git reset --hard *)",
       "PowerShell(git clean *)",
+      "PowerShell(git rebase *)",
       "PowerShell(Remove-Item *)"
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_shell.py"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "TaskCompleted": [
       {
         "hooks": [

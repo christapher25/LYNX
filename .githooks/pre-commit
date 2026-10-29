@@ -1,0 +1,29 @@
+#!/bin/sh
+# LYNX pre-commit gate: every commit (human or agent) runs the invariant suite first.
+# Install once per clone:   git config core.hooksPath .githooks
+# Git for Windows runs this with its bundled sh, so it works from PowerShell and PyCharm too.
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if [ -x ".venv/Scripts/python.exe" ]; then
+  PY=".venv/Scripts/python.exe"      # Windows venv
+elif [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"              # Linux/macOS venv
+else
+  PY="python"
+fi
+
+echo "pre-commit: running tests/invariants ..."
+"$PY" -m pytest tests/invariants -q -x --no-header -p no:cacheprovider
+status=$?
+
+if [ "$status" -eq 5 ]; then
+  echo "pre-commit: BLOCKED - no invariant tests were collected."
+  exit 1
+fi
+if [ "$status" -ne 0 ]; then
+  echo "pre-commit: BLOCKED - the invariant suite failed. Fix it, then commit again."
+  exit 1
+fi
+echo "pre-commit: invariant suite passed."
+exit 0

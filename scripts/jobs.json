@@ -1,0 +1,35 @@
+{
+  "_comment": "Allowlist for scripts/run_job.py. Only jobs listed here can be started by the lead without asking. Each job must be resumable (checkpointed), write only to data/processed/ or feature folders, never delete raw data, and finish within max_hours. Adding an entry follows the rules in docs/agent-team/STANDING_ORDERS.md.",
+  "jobs": {
+    "fno_features": {
+      "description": "Stage 10 F&O feature block, full history (recomputes everything)",
+      "module": "features.blocks.fno",
+      "args": ["--no-resume"],
+      "resume_args": [],
+      "max_hours": 6,
+      "log_dir": "data/raw/_logs"
+    },
+    "verify_stage10_fno_features": {
+      "description": "Stage 10 F&O feature verifier on the full-history output",
+      "module": "scripts.verify_stage10_fno_features",
+      "args": [],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "verify_stage10": {
+      "description": "Combined Stage 10 acceptance check",
+      "module": "scripts.verify_stage10",
+      "args": [],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "invariants": {
+      "description": "Full invariant suite (tests/invariants)",
+      "module": "pytest",
+      "args": ["tests/invariants", "-q"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
+    }
+  }
+}
