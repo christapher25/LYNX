@@ -300,6 +300,11 @@ def cmd_wait(args) -> int:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="LYNX allowlisted job runner")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
