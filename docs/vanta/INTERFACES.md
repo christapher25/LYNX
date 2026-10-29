@@ -131,6 +131,8 @@ Returned DataFrame: one row per candidate, **same order as `cands`**, index rese
 | `cap_binding` | bool | INVENTED: the same value on every row, true iff BH set size > `cap` |
 | `q`, `n_calibration`, `effective_n` | float / int / float | `n_calibration` = rows in the selected calibration set (tests assert 120 and 100); `effective_n` = Kish ESS `(Σw)²/Σw²` |
 
+Additional `run_gate` log columns (all INVENTED, alongside `cap_binding`): `score_missing` (bool; candidate score non-finite: p = 1, never in the BH set or published, but still counted in m), `age_only_fallback` (bool; Kish ESS below `ess_floor`, or a non-finite regime posterior, so age-only weights were used) and `effective_n_age_only` (Kish ESS of the age-only weights). `effective_n` is NaN when the weights are non-finite (a NaN posterior); consumers must tolerate NaN. `bh_threshold` and k are computed on the set after masking missing-score rows, with m including those rows. `build_fold_gains` maps non-finite gains (e.g. `atr_pct == 0`, negative or NaN ATR) to NaN: never clipped, never used in the winsorisation fit.
+
 SPEC-required `vanta_gate_log` columns that the tests do not read (`decision_date`, `horizon`, version tags, `y_net`, `lost`) are not part of this interface yet.
 
 ## Ambiguities for the lead
