@@ -39,6 +39,7 @@ from typing import Collection, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -114,4 +115,4 @@ def run_breadth_pipeline() -> dict:
 
 
 if __name__ == "__main__":
-    print(run_breadth_pipeline())
+    logger.info(run_breadth_pipeline())

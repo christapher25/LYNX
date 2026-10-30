@@ -146,3 +146,25 @@ SPEC-required `vanta_gate_log` columns that the tests do not read (`decision_dat
 7. **Gap-down rule: RESOLVED (user decision 2026-10-29).** Where `STOP_GAP` and `STOP_DELAYED_LOWER_LOCK` collide: a gap-down session (open <= stop, after the entry day) that is lower-locked (lower hit and raw close == raw low, the existing definition) exits at the close of the first non-locked session with `exit_reason = "STOP_DELAYED_LOWER_LOCK"` and `lock_delay_sessions` = sessions from the gap day to that exit (>= 1). An unlocked gap-down exits at the open with `"STOP_GAP"`, delay 0. Tested in `check_n4_gap_down_lock` (test_vanta_label_fills.py). Note: the "locked" test for a gap day is the close-based one; a day that opens at the lower limit but trades off it by the close counts as unlocked (STOP_GAP at the open); the tests do not assert that case.
 
 Resolved, no longer open: tie order in publication (higher score first, user-confirmed Q4); `embargo` unit (sessions, Q2).
+
+## 5. `vanta.m1` (Stage 13M; M1 pure functions, approved by the lead 2026-10-30)
+
+Tests: `tests/invariants/vanta/test_vanta_m1.py`; reference and broken toys: `vanta_toys_m1.py`. All names are INVENTED (spec silent).
+Constants: `Q=0.30`, `CAP=10`, `REFERENCE_NOTIONAL=100_000`, `HORIZONS=(5,20)`, `K_S_GRID=(1.0,1.5,2.0)`, `K_T_GRID=(1.5,2.0,3.0)`.
+Gate-log frame `log`: `decision_date` (Timestamp), `symbol`, `published` (bool), `fill_status` (str), `y_net` (float; NaN until matured / on no fill).
+
+| Function | Contract |
+|---|---|
+| `realised_fdr(log) -> dict` | keys `fdr, n_published, n_filled, n_no_fill, n_losers, n_unmatured`. Published rows only. `n_no_fill` = published with `fill_status != "FILLED"`; `n_filled` = published FILLED with finite `y_net`; `n_unmatured` = published FILLED with NaN `y_net`; loser = `y_net <= 0`; `fdr = n_losers/n_filled` (NaN if 0). |
+| `fdr_by_year(log) -> dict[int,float]` | same rule per `decision_date.year`; years with `n_filled == 0` omitted (INVENTED). |
+| `publication_rate(log, decision_dates=None) -> float` | weeks (unique decision_date) with >= 1 published / total weeks; denominator is `decision_dates` if given, else unique dates in `log`. |
+| `newey_west_se(x, lags) -> float` | Bartlett: `gamma_l = (1/n) sum (x_t-m)(x_{t-l}-m)`; `var = (g0 + 2 sum_{l=1..L}(1-l/(L+1)) g_l)/n`; `[1,-1,1,-1]` gives 0.5 (L=0), 0.25 (L=1). Lag rule not tested. |
+| `weekly_block_bootstrap(y, week_ids, n_boot, seed) -> ndarray` | pooled per-signal mean of each whole-week resample. |
+| `bootstrap_ci(draws, level=0.95) -> (lo, hi)` | `np.percentile` at 2.5 / 97.5. |
+| `weekly_block_bootstrap_diff(y_a, week_a, y_b, week_b, n_boot, seed) -> ndarray` | `mean_a - mean_b`, same resampled weeks for both arms, weeks drawn from the union. |
+| `choose_k(trades, start="2010-01-01", end="2012-12-31") -> (k_s, k_t)` | `trades` cols `decision_date, k_s, k_t, y_net`; mean `y_net` per combo over rows with `start <= decision_date <= end` and finite `y_net` (NaN ignored, not zero); argmax; ties pick the first combo in grid order (k_s then k_t ascending), pinned by the lead. |
+| `go_report(log, oos_start=Timestamp("2013-01-01")) -> {"in_sample": m, "oos": m}` | `m = dict(fdr, n_filled, n_no_fill, publication_rate, fdr_by_year)`, each on its own slice (`decision_date < oos_start` vs `>=`). |
+| `v4_gate_reconstruction(cands, cal, T, *, model_version, candidate_filter_version, q=0.30, cap=10) -> DataFrame` | cols `symbol, score, fitted, bound, published`, order of `cands`. Calibration = SPEC query rule plus finite `y_net`. `fitted` = linear OLS of `y_net` on `score` (INVENTED). `shortfall = fitted - y`; `bound = fitted - np.quantile(shortfall, 1-q)` (numpy linear interpolation, INVENTED); published iff `bound > 0` (strict), at most `cap` by score descending. A RECONSTRUCTION of the v4 gate. |
+| `impact_floor_per_side(turnover_rank) -> float` | 1..200 gives 0.0005, 201..700 gives 0.0020 (the user's assumption); rank > 700 or NaN gives NaN (INVENTED; the cost run must flag these trades, never default them); rank < 1 raises ValueError. |
+| `turnover_ranks(trailing_turnover: Series) -> Series` | 1 = highest turnover, `method="min"`, NaN stays NaN. |
+| `fdr_report_text(stats, q) -> str` | contains "empirical", "NO_FILL" and the `n_no_fill` number; never describes q as a guarantee (only "not a guarantee" / "no guarantee" phrasing). |

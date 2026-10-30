@@ -23,6 +23,45 @@
       "max_hours": 1,
       "log_dir": "logs/jobs"
     },
+    "publication_monitor": {
+      "description": "Publication-timing monitor for TODAY (IST) as target date; start it BEFORE the evening publications, once per trading day (user item 20, 2026-10-30). Writes data/raw/_publication/first_seen.jsonl only at its end; not resumable.",
+      "module": "data.publication_monitor",
+      "args": [],
+      "max_hours": 22,
+      "log_dir": "logs/jobs"
+    },
+    "m1_h5_zero": {
+      "description": "Stage 13M M1 run, horizon 5, impact 0 (writes data/processed/m1/, resumable, run the four m1 jobs one at a time: they share cache files)",
+      "module": "scripts.run_m1",
+      "args": ["--horizon", "5", "--impact", "zero"],
+      "resume_args": ["--horizon", "5", "--impact", "zero"],
+      "max_hours": 4,
+      "log_dir": "logs/jobs"
+    },
+    "m1_h5_floor": {
+      "description": "Stage 13M M1 run, horizon 5, pessimistic impact floor (judged run)",
+      "module": "scripts.run_m1",
+      "args": ["--horizon", "5", "--impact", "floor"],
+      "resume_args": ["--horizon", "5", "--impact", "floor"],
+      "max_hours": 4,
+      "log_dir": "logs/jobs"
+    },
+    "m1_h20_zero": {
+      "description": "Stage 13M M1 run, horizon 20, impact 0",
+      "module": "scripts.run_m1",
+      "args": ["--horizon", "20", "--impact", "zero"],
+      "resume_args": ["--horizon", "20", "--impact", "zero"],
+      "max_hours": 4,
+      "log_dir": "logs/jobs"
+    },
+    "m1_h20_floor": {
+      "description": "Stage 13M M1 run, horizon 20, pessimistic impact floor (judged run)",
+      "module": "scripts.run_m1",
+      "args": ["--horizon", "20", "--impact", "floor"],
+      "resume_args": ["--horizon", "20", "--impact", "floor"],
+      "max_hours": 4,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",

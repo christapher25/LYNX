@@ -51,6 +51,8 @@ class RegimeHMM:
     feature_names: tuple
     train_end: pd.Timestamp | None
     n_train: int
+    train_loglik: float = float("nan")  # training-window log likelihood of the kept restart
+    restart_logliks: tuple = ()  # one per restart, in restart order (restart 0 = tercile init)
 
 
 # ---------------------------------------------------------------- emissions
@@ -141,19 +143,28 @@ def fold_train_end(sessions: pd.DatetimeIndex, test_start, embargo_sessions: int
     return sessions[last]
 
 
-def fit_hmm(features: pd.DataFrame, train_end, n_states: int = N_STATES,
-            n_iter: int = 200, tol: float = 1e-6) -> RegimeHMM:
-    """Fit on rows with index <= train_end ONLY. Deterministic (no random init).
+N_RESTARTS = 5
+RESTART_SEED = 20240611
 
-    States are ordered by mean of the first feature (log VIX): state 0 calmest, K-1 most stressed.
+
+def fit_hmm(features: pd.DataFrame, train_end, n_states: int = N_STATES,
+            n_iter: int = 200, tol: float = 1e-6, n_restarts: int = N_RESTARTS,
+            seed: int = RESTART_SEED) -> RegimeHMM:
+    """Fit on rows with index <= train_end ONLY. Deterministic for a given seed.
+
+    EM runs `n_restarts` times: restart 0 from the VIX-tercile init, the rest from seeded
+    random soft assignments (seed + restart index). The restart with the highest TRAINING
+    log likelihood is kept. States are ordered by mean of the first feature (log VIX):
+    state 0 calmest, K-1 most stressed.
     """
+    if n_restarts < 1:
+        raise ValueError("n_restarts must be at least 1")
     train_end = pd.Timestamp(train_end)
     tr = features.loc[features.index <= train_end, list(FEATURES)]
     tr = tr[tr.notna().any(axis=1)]
     X = tr.to_numpy(dtype=float)
     if len(X) < 10 * n_states:
         raise ValueError(f"too few training rows ({len(X)})")
-    D = X.shape[1]
     mu = np.nanmean(X, axis=0)
     sigma = np.nanstd(X, axis=0)
     sigma = np.where(sigma > 0, sigma, 1.0)
@@ -162,18 +173,39 @@ def fit_hmm(features: pd.DataFrame, train_end, n_states: int = N_STATES,
     hi = np.nanpercentile(Z, _WINSOR[1], axis=0)
     Z = np.clip(Z, lo, hi)
 
-    # deterministic init: terciles of the first feature (rows lacking it go to the middle state)
+    # restart 0: deterministic terciles of the first feature (rows lacking it go to the middle state)
     key = np.where(np.isnan(Z[:, 0]), np.nanmedian(Z[:, 0]), Z[:, 0])
     order = np.argsort(key, kind="stable")
-    resp = np.zeros((len(Z), n_states))
+    resp0 = np.zeros((len(Z), n_states))
     for k, idx in enumerate(np.array_split(order, n_states)):
-        resp[idx, k] = 1.0
+        resp0[idx, k] = 1.0
+
+    fits = []
+    for r in range(n_restarts):
+        if r == 0:
+            resp = resp0
+        else:
+            resp = np.random.default_rng(seed + r).dirichlet(np.full(n_states, 0.3), size=len(Z))
+        fits.append(_run_em(Z, resp, n_states, n_iter, tol))
+    lls = tuple(f[4] for f in fits)
+    pi, A, means, variances, ll = fits[int(np.argmax(lls))]  # ties -> earliest restart
+
+    perm = np.argsort(means[:, 0], kind="stable")
+    return RegimeHMM(
+        startprob=pi[perm], transmat=A[np.ix_(perm, perm)], means=means[perm], variances=variances[perm],
+        mu=mu, sigma=sigma, lo=lo, hi=hi, feature_names=tuple(FEATURES), train_end=train_end, n_train=len(X),
+        train_loglik=ll, restart_logliks=lls,
+    )
+
+
+def _run_em(Z: np.ndarray, resp: np.ndarray, n_states: int, n_iter: int, tol: float):
+    """One Baum-Welch run from initial responsibilities; returns (pi, A, means, variances, loglik)."""
     means, variances = _m_step_emission(Z, resp)
     A = np.full((n_states, n_states), 0.1 / (n_states - 1))
     np.fill_diagonal(A, 0.9)
     pi = np.full(n_states, 1.0 / n_states)
-
     prev = -np.inf
+    ll = -np.inf
     for _ in range(n_iter):
         logb = _log_emissions(Z, means, variances)
         gamma, xi_sum, ll = _e_step(pi, A, logb)
@@ -185,12 +217,9 @@ def fit_hmm(features: pd.DataFrame, train_end, n_states: int = N_STATES,
         if abs(ll - prev) < tol * max(1.0, abs(ll)):
             break
         prev = ll
-
-    perm = np.argsort(means[:, 0], kind="stable")
-    return RegimeHMM(
-        startprob=pi[perm], transmat=A[np.ix_(perm, perm)], means=means[perm], variances=variances[perm],
-        mu=mu, sigma=sigma, lo=lo, hi=hi, feature_names=tuple(FEATURES), train_end=train_end, n_train=len(X),
-    )
+    # likelihood of the final parameters (ll above is for the parameters before the last M step)
+    ll = _e_step(pi, A, _log_emissions(Z, means, variances))[2]
+    return pi, A, means, variances, ll
 
 
 def _m_step_emission(Z: np.ndarray, resp: np.ndarray):

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,10 @@ NAN = float("nan")
 BROKERAGE_REFERENCE_NOTIONAL_INR = 100_000.0
 """ASSUMPTION pending a user ruling (not in the spec): the flat per-order brokerage in costs/model.py (Rs.20) is not a fraction
 of notional, so it is expressed against a reference position of Rs.1,00,000 per name."""
+
+TERMINAL_RTOL = 1e-6
+"""A Stage 5 terminal value must equal the bars' own last adjusted close to this relative tolerance, else it is in other price units
+(an older adjustment) and the trade is left NO_DATA."""
 
 REQUIRED_COLUMNS = ("raw_open", "raw_high", "raw_low", "raw_close", "open", "high", "low", "close")
 
@@ -80,14 +85,20 @@ def _isnan(x) -> bool:
 
 
 def simulate_trade(symbol, bars, decision_date, horizon, k_s, k_t, atr, hits, hit_coverage,
-                   cost_fn=None, delisted_after=None, *, sessions=None):
+                   cost_fn=None, delisted_after=None, *, sessions=None, terminal_value=None):
     """Simulate one NEL trade. See the module docstring; units and column names follow docs/vanta/INTERFACES.md section 1.
 
     `sessions` (optional, keyword-only): the market's sorted session calendar. With it, t+1 and t+h are market sessions, a
     symbol with no bar on t+1 is NO_FILL_NO_TRADE, and a time exit on a day the symbol did not trade happens at the close
     of the first session on or after t+h on which it has a bar (exit_date and label_end_date are that date; NO_DATA if it
     never trades again in the data). Lock delay counts market-session positions. Without it the rows of `bars` are taken
-    to be consecutive market sessions and the delay counts bar rows."""
+    to be consecutive market sessions and the delay counts bar rows.
+
+    `delisted_after` (the symbol's last traded date) and `terminal_value` (its Stage 5 terminal value, the last traded adjusted
+    close; see load_terminal_values) are passed together by terminal_kwargs(). A trade still open when a delisted name's history
+    ends exits at `terminal_value` (DELISTED). If `terminal_value` is given but unusable (NaN, non-positive, or not the bars' own
+    last adjusted close within TERMINAL_RTOL) the trade stays NO_DATA: never a guessed price. With `terminal_value` omitted the
+    last adjusted close is used (the pre-wiring behaviour, kept for direct callers)."""
     if cost_fn is None:
         cost_fn = default_cost_fn
     missing = [c for c in REQUIRED_COLUMNS if c not in bars.columns]
@@ -202,15 +213,25 @@ def simulate_trade(symbol, bars, decision_date, horizon, k_s, k_t, atr, hits, hi
             exit_j, exit_px, reason = end, ac[end], "TIME"
 
     last_j = n - 1
-    ended = delisted_after is not None and idx[last_j] <= pd.Timestamp(delisted_after)
+    if terminal_value is not None:
+        # a Stage 5 terminal value belongs to the symbol's true last bar: bars cut earlier are truncated, not delisted
+        ended = delisted_after is not None and idx[last_j] == pd.Timestamp(delisted_after)
+    else:
+        ended = delisted_after is not None and idx[last_j] <= pd.Timestamp(delisted_after)
+    delist_px = ac[last_j]
+    if terminal_value is not None:
+        tv = float(terminal_value)
+        usable = math.isfinite(tv) and tv > 0 and math.isfinite(delist_px) and abs(tv / delist_px - 1.0) <= TERMINAL_RTOL
+        ended = ended and usable
+        delist_px = tv
     if reason == "STOP_DELAYED_LOWER_LOCK" and exit_j is None:
         # lower-locked through the last available bar: only a known delisting gives a (terminal-value) exit
         if ended:
-            exit_j, exit_px, reason, delay = last_j, ac[last_j], "DELISTED", delay_of(stop_day, last_j)
+            exit_j, exit_px, reason, delay = last_j, delist_px, "DELISTED", delay_of(stop_day, last_j)
         else:
             reason = None
     elif reason is None and ended:
-        exit_j, exit_px, reason = last_j, ac[last_j], "DELISTED"        # Stage 5 terminal value: last traded price
+        exit_j, exit_px, reason = last_j, delist_px, "DELISTED"         # Stage 5 terminal value: last traded price
 
     if reason is None or exit_j is None or _isnan(float(exit_px)):
         return row                                                      # censored / unpriced: not a completed label
@@ -223,3 +244,53 @@ def simulate_trade(symbol, bars, decision_date, horizon, k_s, k_t, atr, hits, hi
                lock_delay_sessions=int(delay), lock_source="HIT_LIST" if covered else "NONE", gross_return=float(gross),
                cost_entry=ce, cost_exit=cx, cost_impact=ci, y_net=gross - ce - cx - ci, label_end_date=idx[exit_j])
     return row
+
+
+def load_terminal_values(universe_dir=None, adjusted_dir=None) -> dict:
+    """{symbol: (last_date, terminal_value)} for every symbol that is delisted by Stage 5's own rule (data/build_universe.py).
+
+    Stage 5 flags a symbol delisted in a year's snapshot when its LAST_DATE is before that year's 1 January and stores TERMINAL_VALUE
+    (last traded ADJ_CLOSE) only on such rows, and only for names in that year's top list. A name that died mid-year, or fell out of
+    the list afterwards, therefore has no stored value although the same rule applies to it. This applies the rule at the NEWEST
+    snapshot's cutoff to every symbol in any snapshot: delisted iff its latest LAST_DATE is before that cutoff. The value is
+    Stage 5's TERMINAL_VALUE where one was stored, else the same derivation (last ADJ_CLOSE) from the Stage 4 file. Either way the
+    Stage 4 file must confirm the last date and the value; a symbol without a usable terminal value is left out (its trades stay
+    NO_DATA). Truncated histories are not delistings: symbols whose LAST_DATE is on or after the cutoff are never included."""
+    from config import ADJUSTED_PRICES_DIR, UNIVERSE_DIR
+
+    universe_dir = Path(universe_dir or UNIVERSE_DIR)
+    adjusted_dir = Path(adjusted_dir or ADJUSTED_PRICES_DIR)
+    files = sorted(universe_dir.glob("*.parquet"))
+    if not files:
+        return {}
+    frames = [pd.read_parquet(f, columns=["SYMBOL", "LAST_DATE", "TERMINAL_VALUE"]).assign(YEAR=int(f.stem)) for f in files]
+    allrows = pd.concat(frames, ignore_index=True)
+    cutoff = pd.Timestamp(f"{int(allrows['YEAR'].max())}-01-01")
+    allrows["LAST_DATE"] = pd.to_datetime(allrows["LAST_DATE"])
+    latest = allrows.sort_values(["SYMBOL", "LAST_DATE", "YEAR"]).groupby("SYMBOL").tail(1).set_index("SYMBOL")
+    stored = allrows[allrows["TERMINAL_VALUE"].notna()].sort_values("YEAR").groupby("SYMBOL").tail(1).set_index("SYMBOL")["TERMINAL_VALUE"]
+    out = {}
+    for symbol, row in latest.iterrows():
+        last = row["LAST_DATE"]
+        if pd.isna(last) or last >= cutoff:
+            continue
+        path = adjusted_dir / f"{symbol}.parquet"
+        if not path.exists():
+            continue
+        px = pd.read_parquet(path, columns=["DATE", "ADJ_CLOSE"]).sort_values("DATE")
+        if px.empty or pd.Timestamp(px["DATE"].iloc[-1]) != last:
+            continue
+        value = float(px["ADJ_CLOSE"].iloc[-1])
+        if symbol in stored.index and not (abs(float(stored[symbol]) / value - 1.0) <= TERMINAL_RTOL if value > 0 else False):
+            continue                                                  # Stage 5's stored value disagrees with Stage 4: stale, not trusted
+        if math.isfinite(value) and value > 0:
+            out[symbol] = (last, value)
+    return out
+
+
+def terminal_kwargs(symbol, terminal_values) -> dict:
+    """simulate_trade keyword arguments for `symbol`: delisted_after and terminal_value if it has a terminal value, else {}."""
+    if symbol not in terminal_values:
+        return {}
+    last, value = terminal_values[symbol]
+    return {"delisted_after": last, "terminal_value": value}

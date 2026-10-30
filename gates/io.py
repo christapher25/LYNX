@@ -34,13 +34,20 @@ def _unique(frame: pd.DataFrame, block: str, symbol: str) -> pd.DataFrame:
     return frame
 
 
-def load_gate_inputs(symbols: Iterable[str], start=None, end=None, dates: Iterable | None = None) -> pd.DataFrame:
+RANK_COLUMNS = ["liquidity_rank", "is_missing_liquidity_rank"]
+
+
+def load_gate_inputs(symbols: Iterable[str], start=None, end=None, dates: Iterable | None = None,
+                     liquidity_ranks: pd.DataFrame | None = None) -> pd.DataFrame:
     """Rows (symbol, date, hit_*, fno_in_ban, price_band_pct, flags) for EVERY requested symbol on EVERY session of the grid.
 
     The grid is `dates` when given (exactly those sessions, intersected with [start, end]); otherwise the union of dates found in the
     requested symbols' files within [start, end]. A (symbol, date) on the grid that neither block holds -- including a symbol with no
     file in either block -- comes back with NaN values and both missing flags True, so the gate says UNAVAILABLE, never a missing row
     and never PASS. Duplicate (symbol, date) rows within a block raise ValueError.
+
+    `liquidity_ranks` (optional): {symbol, date, liquidity_rank, is_missing_liquidity_rank} from gates.liquidity.trailing_turnover_rank,
+    left-merged onto the grid. A (symbol, date) it does not hold, or no frame at all, gives liquidity_rank NaN and the flag True.
     """
     symbols = list(dict.fromkeys(symbols))
     frames = []
@@ -70,9 +77,17 @@ def load_gate_inputs(symbols: Iterable[str], start=None, end=None, dates: Iterab
         grid = pd.DatetimeIndex(found["date"].unique())
     full = pd.MultiIndex.from_product([symbols, grid], names=["symbol", "date"]).to_frame(index=False)
     out = full.merge(found, on=["symbol", "date"], how="left")
-    for column in CIRCUIT_COLUMNS + FNO_COLUMNS:
+    if liquidity_ranks is not None:
+        ranks = liquidity_ranks[["symbol", "date", *RANK_COLUMNS]].copy()
+        ranks["date"] = pd.to_datetime(ranks["date"])
+        if ranks.duplicated(["symbol", "date"]).any():
+            raise ValueError("liquidity_ranks has rows sharing a (symbol, date)")
+        out = out.merge(ranks, on=["symbol", "date"], how="left")
+    for column in CIRCUIT_COLUMNS + FNO_COLUMNS + RANK_COLUMNS[:1]:
         if column not in out.columns:
             out[column] = float("nan")
-    for flag in ("is_missing_circuit_hits", "is_missing_ban"):
+    if "is_missing_liquidity_rank" not in out.columns:
+        out["is_missing_liquidity_rank"] = True
+    for flag in ("is_missing_circuit_hits", "is_missing_ban", "is_missing_liquidity_rank"):
         out[flag] = out[flag].astype("boolean").fillna(True).astype(bool)     # a row one block lacks is missing, not clear
     return out.sort_values(["symbol", "date"], ignore_index=True)
