@@ -62,6 +62,54 @@
       "max_hours": 4,
       "log_dir": "logs/jobs"
     },
+    "m1b_h5_zero": {
+      "description": "Stage 13M M1b run (corrected M1), horizon 5, impact 0. Writes data/processed/m1b/, resumable; run the m1b jobs one at a time, zero before floor (labels are shared)",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "5", "--impact", "zero"],
+      "resume_args": ["--horizon", "5", "--impact", "zero"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m1b_h5_floor": {
+      "description": "Stage 13M M1b run, horizon 5, pessimistic impact floor (judged run)",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "5", "--impact", "floor"],
+      "resume_args": ["--horizon", "5", "--impact", "floor"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m1b_h20_zero": {
+      "description": "Stage 13M M1b run, horizon 20, impact 0",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "20", "--impact", "zero"],
+      "resume_args": ["--horizon", "20", "--impact", "zero"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m1b_h20_floor": {
+      "description": "Stage 13M M1b run, horizon 20, pessimistic impact floor (judged run)",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "20", "--impact", "floor"],
+      "resume_args": ["--horizon", "20", "--impact", "floor"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m1b_cliff0_h5_floor": {
+      "description": "M1b diagnostic (NOT JUDGED): liquidity cliff off so the 0.20% tier is exercised, h=5, floor. Own directory data/processed/m1b_cliff0/",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "5", "--impact", "floor", "--liquidity-cliff", "0", "--tag", "cliff0"],
+      "resume_args": ["--horizon", "5", "--impact", "floor", "--liquidity-cliff", "0", "--tag", "cliff0"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m1b_cliff0_h20_floor": {
+      "description": "M1b diagnostic (NOT JUDGED): liquidity cliff off, h=20, floor. Own directory data/processed/m1b_cliff0/",
+      "module": "scripts.run_m1b",
+      "args": ["--horizon", "20", "--impact", "floor", "--liquidity-cliff", "0", "--tag", "cliff0"],
+      "resume_args": ["--horizon", "20", "--impact", "floor", "--liquidity-cliff", "0", "--tag", "cliff0"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",

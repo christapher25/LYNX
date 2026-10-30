@@ -168,3 +168,15 @@ Gate-log frame `log`: `decision_date` (Timestamp), `symbol`, `published` (bool),
 | `impact_floor_per_side(turnover_rank) -> float` | 1..200 gives 0.0005, 201..700 gives 0.0020 (the user's assumption); rank > 700 or NaN gives NaN (INVENTED; the cost run must flag these trades, never default them); rank < 1 raises ValueError. |
 | `turnover_ranks(trailing_turnover: Series) -> Series` | 1 = highest turnover, `method="min"`, NaN stays NaN. |
 | `fdr_report_text(stats, q) -> str` | contains "empirical", "NO_FILL" and the `n_no_fill` number; never describes q as a guarantee (only "not a guarantee" / "no guarantee" phrasing). |
+
+## 6. `vanta.m1b` (Stage 13M, corrected M1; proposed by tests-13a 2026-10-30, all names INVENTED)
+
+Tests: `tests/invariants/vanta/test_vanta_m1b.py`; reference and broken toys: `vanta_toys_m1b.py`. Stats, constants (`Q`, `CAP`, `LIQUIDITY_CLIFF_RANK`), k-choice and GO report are reused from `vanta.m1`, unchanged.
+
+| Function | Contract |
+|---|---|
+| `percentile_rank(values) -> ndarray` | One week. Finite values only; `pct = average_rank / n_finite` (ties share the average rank; range (0,1]). `[30,10,40,20]` gives `[.75,.25,1,.5]`; `[1,2,2,3]` gives `[.25,.625,.625,1]`. NaN/inf stays NaN and does not count in n (never 0). All-NaN week returns all NaN; a single finite value scores 1.0 (lead, 2026-10-30). |
+| `weekly_scores(frame, momentum_col="momentum") -> Series` | Aligned to `frame.index`; `percentile_rank` applied separately per `decision_date`. Never raw momentum, never pooled across weeks. |
+| `eligible_candidates(week, cliff=200) -> DataFrame` | `week` cols `symbol, banned, hit_upper, hit_lower, liquidity_rank, momentum`. Keeps EVERY row with not banned, not hit_upper, not hit_lower, `liquidity_rank` finite and `<= cliff` (inclusive), finite momentum. No top-N truncation; row order preserved. Flags may be nullable bool: a missing/NA flag means "list unavailable" and the row is EXCLUDED (block policy; lead 2026-10-30). Never `astype(bool)` an NA flag. |
+| `calibration_rows(scored, T, window_weeks=52) -> DataFrame` | `scored` cols `decision_date, symbol, score, y_net, matured_at, published`. Keeps `matured_at <= T`, `decision_date >= T - window_weeks weeks` (both inclusive), finite `y_net`. Does not filter on `published` (calibration is all scored candidates, FCC). |
+| `select_published(frame, cap=10) -> bool ndarray` | `frame` cols `symbol, score, in_bh_set`; aligned to `frame`. True iff `in_bh_set` and among the top `cap` by score descending (stable). Never more than `cap`, never outside the BH set. |
