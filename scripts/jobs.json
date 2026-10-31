@@ -110,6 +110,14 @@
       "max_hours": 8,
       "log_dir": "logs/jobs"
     },
+    "announcements_full": {
+      "description": "Stage 16 NSE corporate announcements, full history 2003-01-01 to yesterday (one monthly request per chunk, resumable: a chunk is done when its Parquet exists). Writes ONLY data/raw/announcements/ and data/raw/_manifests/announcements.jsonl. One-off exception to standing orders s5, approved by the user 2026-10-31.",
+      "module": "data.ingest_announcements",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",
