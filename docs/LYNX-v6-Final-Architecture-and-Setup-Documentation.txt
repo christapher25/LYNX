@@ -1456,6 +1456,18 @@ criteria 2 and 3: the gate is doing its job. If criteria 2 or 3 fail, the gate i
 model is trained. The Stage 7 result (about 4.6% net annualised long-short decile spread,
 monthly) measures something different and is not evidence for or against M1.
 
+AMENDMENT 2026-10-31 (project owner's decision): M2 replaces M1 as the gate test.
+M1 (12-1 momentum, top-10 candidates) was run on 2026-10-30 and judged NO-GO. M1b (corrected:
+all gate-passing candidates, weekly percentile-rank score) was run on 2026-10-31 and judged
+NO-GO; criteria 2, 3 and 4 failed on every gated arm. The binding failure is the score: the
+ungated momentum-percentile top 10 has negative net return at h=5 (confidence interval below
+zero) and a loser rate close to a coin flip against the Nifty 50. The secondary failure is gate
+miscalibration when losers cluster in down-market weeks. M1 and M1b are kept as the record
+(logs/m1_report.md, logs/m1b_report.md). The gate is now tested at M2, scored by the Stage 14 B1
+baseline (CatBoost, walk-forward out-of-sample scores on net labels), under a pre-registration
+committed before any Stage 14 run (docs/vanta/M2_PREREG.md). The 2013-onward window was seen in
+M1 and M1b, so M2 is not a fresh test; the only truly fresh test is the forward paper-trading log.
+
 12. Invariants and the silent-failure
 catalogue
 
