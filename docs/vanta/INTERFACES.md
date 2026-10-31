@@ -208,3 +208,11 @@ Open questions for the lead (tests avoid asserting these):
 2. Rows with ALL features missing at scoring time: score NaN (unavailable) or model output? Not asserted.
 3. `wf.run_fold` hands `score_fn` and the `scored` frame only `decision_date, symbol, y_net`; NO_FILL candidates and `fill_status` are not carried. `net_per_signal` accepts `fill_status` when present; the implementer must decide how the published-signal frame gets it (M2 reports NO_FILL separately).
 4. Hyperparameter tuning: `choose_hyperparameters` uses fold 0's inner split only. Using fold 1's validation year would read fold 0's OUT-OF-SAMPLE labels (they are the same year), which M2_PREREG section 3 forbids in spirit; "the earliest folds" (plural) is therefore read as fold 0 plus nothing else. Lead to confirm or give another inner scheme.
+
+### 7a. Names added by the implementer (quant-15c, 2026-10-31)
+
+- `vanta.baselines.B1_PARAMS_BY_HORIZON: dict[int, dict]` keys 5 and 20; template `B1_PARAMS`; placeholders until the tuning job has run (lead decision: tuned per horizon on fold 0's inner split). `B1_PARAM_GRID` (8 entries) and `A1_PARAMS`, `A1_PUBLISH_ABOVE = 0.5` are also module constants.
+- `fold_report(..., publish_above=None)`: extra keyword; when set (A1) only scores strictly above it enter the top-n; rank IC always uses every scored row.
+- `first_scored_and_judged_week(scored, oos_start, window_weeks=52) -> dict` keys `first_scored_week`, `first_judged_week`. Judged = first scored week >= oos_start with first_scored_week <= T - 52 weeks (the calibration window bound of vanta/m1b.py:68-74 and vanta/gate.py:59-74; same for all horizons; m1b has no code dropping early weeks, this is the lead's reading).
+- `make_score_fn`: a row with every feature missing, or absent from the panel, scores NaN. `make_fit_fn` / `make_score_fn` raise on duplicate `(decision_date, symbol)` feature rows.
+- Driver `scripts/run_baselines.py`: `indicator_panel(df, loader)` (Stage 9 indicators as of the decision date, computed from adjusted bars with `signals.indicators.compute_indicators`, no Postgres), `add_scorer_feature(ind)` (A1 `det_score`), `build_features(df, sessions)`. Features: Stage 12 blocks (no flows_dii) + `mom, liquidity_rank, univ_rank` + 9 scale-free indicators.
