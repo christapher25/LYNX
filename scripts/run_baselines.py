@@ -39,6 +39,7 @@ from pitstore.store import BLOCK_SPECS, default_loader, select_as_of
 from scripts import run_m1, run_m1b
 from vanta import baselines as bl
 from vanta import m1
+from vanta import m2
 from vanta import walkforward as wf
 from vanta.labels import load_terminal_values
 
@@ -62,6 +63,19 @@ def _logger(tag: str) -> None:
 
 
 # ----------------------------------------------------------------------------------------------------- inputs
+def frozen_k(horizon: int) -> tuple:
+    """The M1 frozen (k_s, k_t) for h = 5 / 20. Horizon 60 is a DIAGNOSTIC horizon (M2_PREREG section 9.2b) with no M1 k file: it uses
+    the same frozen values (1.5, 1.5), nothing is re-chosen."""
+    return (m2.K_S, m2.K_T) if horizon in m2.DIAGNOSTIC_HORIZONS and horizon not in m2.JUDGED_HORIZONS else run_m1b.frozen_k(horizon)
+
+
+def b1_params(horizon: int) -> dict:
+    """B1 parameters of a horizon. Horizon 60 (diagnostic) has no tuned entry in vanta.baselines.B1_PARAMS_BY_HORIZON: it uses the
+    horizon-20 tuned values (the nearest judged horizon), not a fresh tuning; an explicit entry for 60 takes precedence if one is added."""
+    table = bl.B1_PARAMS_BY_HORIZON
+    return table[horizon] if horizon in table else table[20]
+
+
 def load_candidate_labels(horizon: int, start, end, cliff: int, sessions: pd.DatetimeIndex) -> pd.DataFrame:
     """The M1b candidate table with NEL labels (frozen k) and the impact floor applied, one row per (decision_date, symbol).
 
@@ -73,7 +87,7 @@ def load_candidate_labels(horizon: int, start, end, cliff: int, sessions: pd.Dat
     if cands is None:
         raise SystemExit(f"candidate cache {cf} is missing or stale; run scripts/run_m1b.py for this window first (this driver "
                          "never builds candidates)")
-    k_s, k_t = run_m1b.frozen_k(horizon)
+    k_s, k_t = frozen_k(horizon)
     labels = run_m1b.build_labels(cands, horizon, k_s, k_t, run_m1b.M1B_DIR / "labels" / f"h{horizon}_cliff{cliff}_ks{k_s}_kt{k_t}",
                                   sessions, load_terminal_values())
     df = cands.merge(labels, on=["symbol", "decision_date"], how="left", validate="one_to_one").assign(horizon=horizon)
@@ -201,9 +215,15 @@ def add_scorer_feature(ind: pd.DataFrame) -> pd.DataFrame:
 def require_tuned_b1_params(horizon: int, mechanics: bool) -> None:
     """Refuse a B1 OOS run while the horizon's parameters are still the placeholder template (M2_PREREG section 3: recorded before the
     first OOS run). A labelled mechanics check is allowed."""
-    if not mechanics and bl.B1_PARAMS_BY_HORIZON[horizon] == bl.B1_PARAMS:
+    if not mechanics and b1_params(horizon) == bl.B1_PARAMS:
         raise SystemExit(f"B1_PARAMS_BY_HORIZON[{horizon}] is still the placeholder template: run --arm tune --horizon {horizon}, record the "
                          "result in vanta/baselines.py and commit it before any B1 out-of-sample run (or use --mechanics-check)")
+
+
+def refuse_tune_for_diagnostic(arm: str, horizon: int) -> None:
+    """Horizon 60 is diagnostic and reuses the h=20 tuned B1 dict (lead decision): tuning it is refused."""
+    if arm == "tune" and horizon not in m2.JUDGED_HORIZONS:
+        raise SystemExit(f"--arm tune is refused for horizon {horizon}: it is a DIAGNOSTIC horizon and reuses the h=20 tuned B1 parameters")
 
 
 def leak_prefix(leak) -> str:
@@ -237,7 +257,7 @@ def mechanics_factory(arm: str):
 
 
 def real_factory(arm: str, horizon: int):
-    return bl.a1_model_factory() if arm == "a1" else bl.b1_model_factory(**bl.B1_PARAMS_BY_HORIZON[horizon])
+    return bl.a1_model_factory() if arm == "a1" else bl.b1_model_factory(**b1_params(horizon))
 
 
 # ----------------------------------------------------------------------------------------------------- output
@@ -282,7 +302,8 @@ def write_outputs(out_dir: Path, name: str, banner: str, result, rep: list, leak
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--arm", choices=["tune", "a0", "a1", "b1"], required=True)
-    ap.add_argument("--horizon", type=int, required=True, choices=m1.HORIZONS)
+    ap.add_argument("--horizon", type=int, required=True, choices=list(m2.ALL_HORIZONS),
+                    help="5, 20 (judged) or 60 (DIAGNOSTIC only, M2_PREREG section 9.2b)")
     ap.add_argument("--start", default=run_m1.WINDOW_START)
     ap.add_argument("--end", default=None, help="last decision date (default: last session on disk)")
     ap.add_argument("--liquidity-cliff", type=int, default=m1.LIQUIDITY_CLIFF_RANK)
@@ -299,6 +320,9 @@ def main() -> None:
     mech = a.mechanics_check
     banner = ("MECHANICS CHECK ONLY (LightGBM stand-in, short window): NOT a baseline result and not usable by M2." if mech
               else "Stage 14 baseline run.")
+    if a.horizon not in m2.JUDGED_HORIZONS:
+        banner += " Horizon 60 is a DIAGNOSTIC horizon (M2_PREREG section 9.2b): reported, NOT JUDGED."
+    refuse_tune_for_diagnostic(a.arm, a.horizon)
     if a.arm == "b1":
         require_tuned_b1_params(a.horizon, mech)
     if a.arm == "tune" and mech:
@@ -324,7 +348,7 @@ def main() -> None:
         panel, cols = build_features(d0, sessions)
         best = bl.choose_hyperparameters(
             bl.B1_PARAM_GRID, lambda p, seed: bl.b1_model_factory(**p)(seed), panel, d0, f0, sessions, seed=0)
-        merged = {**bl.B1_PARAMS_BY_HORIZON[a.horizon], **best}
+        merged = {**b1_params(a.horizon), **best}
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"b1_tuned_h{a.horizon}.json").write_text(json.dumps(merged, indent=1))
         logger.info(f"B1 tuned on fold {f0.fold_id} inner split (fit [{f0.train_start.date()}, {f0.val_start.date()}), evaluate "
@@ -363,7 +387,7 @@ def main() -> None:
         seeds=seeds, publish_above=publish_above)
     leak = wf.detect_leak(result, labels, horizon=a.horizon, step=STEP)
     extra = [f"- features ({len(cols)}): {', '.join(cols)}" if a.arm != "a0" else "- A0 score: 12-1 momentum (vanta.m1.momentum_12_1)",
-             f"- seeds: {list(seeds)}; B1_PARAMS: {bl.B1_PARAMS_BY_HORIZON[a.horizon]}" if a.arm == "b1" else f"- seeds: {list(seeds)}",
+             f"- seeds: {list(seeds)}; B1_PARAMS: {b1_params(a.horizon)}" if a.arm == "b1" else f"- seeds: {list(seeds)}",
              f"- candidates {len(df):,}; fill_status {df['fill_status'].value_counts().to_dict()}"]
     if publish_above is not None:
         extra.append(f"- A1 published when P(win) > {publish_above}, top 10 per week; net/signal is over those")

@@ -174,6 +174,91 @@
       "max_hours": 8,
       "log_dir": "logs/jobs"
     },
+    "baselines_a0_h60": {
+      "description": "Stage 14 A0 at h=60: DIAGNOSTIC horizon (M2_PREREG s9.2b), not judged. Builds the h=60 NEL label cache (long).",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "a0", "--horizon", "60"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_b1_h60": {
+      "description": "Stage 14 B1 at h=60: DIAGNOSTIC horizon, not judged; reuses the h=20 tuned parameters.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "b1", "--horizon", "60"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h5_floor_atr": {
+      "description": "M2 judged cell: h=5, pessimistic floor, ATR k=1.5 levels. Writes data/processed/m2/; skips finished cells.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "5", "--impact", "floor", "--variant", "atr"],
+      "resume_args": ["--horizon", "5", "--impact", "floor", "--variant", "atr"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h5_zero_atr": {
+      "description": "M2 reported cell: h=5, impact zero, ATR.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "5", "--impact", "zero", "--variant", "atr"],
+      "resume_args": ["--horizon", "5", "--impact", "zero", "--variant", "atr"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h20_floor_atr": {
+      "description": "M2 judged cell: h=20, pessimistic floor, ATR.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "20", "--impact", "floor", "--variant", "atr"],
+      "resume_args": ["--horizon", "20", "--impact", "floor", "--variant", "atr"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h20_zero_atr": {
+      "description": "M2 reported cell: h=20, impact zero, ATR.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "20", "--impact", "zero", "--variant", "atr"],
+      "resume_args": ["--horizon", "20", "--impact", "zero", "--variant", "atr"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h5_floor_hold": {
+      "description": "M2 DIAGNOSTIC (NOT JUDGED): A11 hold-to-horizon, h=5, floor.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "5", "--impact", "floor", "--variant", "hold"],
+      "resume_args": ["--horizon", "5", "--impact", "floor", "--variant", "hold"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h20_floor_hold": {
+      "description": "M2 DIAGNOSTIC (NOT JUDGED): A11 hold-to-horizon, h=20, floor.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "20", "--impact", "floor", "--variant", "hold"],
+      "resume_args": ["--horizon", "20", "--impact", "floor", "--variant", "hold"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h60_floor_hold": {
+      "description": "M2 DIAGNOSTIC (NOT JUDGED): A11 hold-to-horizon, h=60, floor.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "60", "--impact", "floor", "--variant", "hold"],
+      "resume_args": ["--horizon", "60", "--impact", "floor", "--variant", "hold"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_h60_floor_atr": {
+      "description": "M2 DIAGNOSTIC (NOT JUDGED): h=60 with ATR levels, floor.",
+      "module": "scripts.run_m2",
+      "args": ["--horizon", "60", "--impact", "floor", "--variant", "atr"],
+      "resume_args": ["--horizon", "60", "--impact", "floor", "--variant", "atr"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "m2_report": {
+      "description": "Assemble logs/m2_report.md from the saved M2 cells (runs the invariant suite for criterion 1).",
+      "module": "scripts.run_m2",
+      "args": ["--report"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",
