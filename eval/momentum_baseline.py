@@ -155,7 +155,7 @@ def backtest_month(
     }
 
 
-def main(start_year: int = 2005, end_year: int = 2025) -> None:
+def main(start_year: int = 2005, end_year: int = 2025) -> pd.DataFrame | None:
     # Starts 2005, not the dataset's 1994 origin: STT was introduced
     # 2004-10-01 (Finance Act 2004, confirmed) and the cost model's
     # pre-STT rate entry carries unverified approximations for stamp
@@ -174,8 +174,13 @@ def main(start_year: int = 2005, end_year: int = 2025) -> None:
 
         signal = compute_momentum_signal(panel)
 
+        # Month m is traded ONLY with the universe of m's own calendar year. The panel still carries each symbol's
+        # earlier history, which the 12-1 signal needs, but signal months outside `year` belong to another year's
+        # universe and are skipped (the legacy loop ran every month of every panel: ~21 overlapping copies).
         months = sorted(signal["DATE"].unique())
         for i in range(len(months) - 1):
+            if pd.Timestamp(months[i]).year != year:
+                continue
             this_month = signal[signal["DATE"] == months[i]]
             next_month = panel[panel["DATE"] == months[i + 1]]
             if this_month.empty or next_month.empty:
@@ -208,6 +213,7 @@ def main(start_year: int = 2005, end_year: int = 2025) -> None:
     if verdict == "NO-GO":
         print("Per architecture doc: widen horizon or tighten universe, "
               "not more model capacity. Decide before Stage 8.")
+    return df
 
 
 if __name__ == "__main__":
