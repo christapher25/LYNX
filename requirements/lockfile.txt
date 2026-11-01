@@ -7,6 +7,7 @@ annotated-types==0.8.0
 anyio==4.15.0
 attrs==26.1.0
 bitsandbytes==0.50.2
+catboost==1.2.10
 certifi==2026.7.22
 charset-normalizer==3.5.1
 click==8.5.0
@@ -106,6 +107,7 @@ urllib3==2.7.0
 wheel==0.48.0
 win32_setctime==1.2.0
 xformers==0.0.35
+xgboost==3.4.1
 xxhash==4.0.1
 yarl==1.24.5
 zipp==4.1.0
