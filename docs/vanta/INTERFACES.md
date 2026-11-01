@@ -216,3 +216,19 @@ Open questions for the lead (tests avoid asserting these):
 - `first_scored_and_judged_week(scored, oos_start, window_weeks=52) -> dict` keys `first_scored_week`, `first_judged_week`. Judged = first scored week >= oos_start with first_scored_week <= T - 52 weeks (the calibration window bound of vanta/m1b.py:68-74 and vanta/gate.py:59-74; same for all horizons; m1b has no code dropping early weeks, this is the lead's reading).
 - `make_score_fn`: a row with every feature missing, or absent from the panel, scores NaN. `make_fit_fn` / `make_score_fn` raise on duplicate `(decision_date, symbol)` feature rows.
 - Driver `scripts/run_baselines.py`: `indicator_panel(df, loader)` (Stage 9 indicators as of the decision date, computed from adjusted bars with `signals.indicators.compute_indicators`, no Postgres), `add_scorer_feature(ind)` (A1 `det_score`), `build_features(df, sessions)`. Features: Stage 12 blocks (no flows_dii) + `mom, liquidity_rank, univ_rank` + 9 scale-free indicators.
+
+## 8. `vanta.m2` (Stage 13M, M2; row 15d; all names INVENTED, proposed by tests-m2 2026-11-01)
+
+Tests: `tests/test_m2_invariants.py`, `tests/test_m2_driver.py` (reference toy in `tests/test_m2_toy.py`). Skip until the module exists.
+
+- Constants: `Q, CAP, TAU_WEEKS, ESS_FLOOR, WINDOW_WEEKS, K_S, K_T, B1_SEEDS, IMPACT_FLOOR_TOP200, IMPACT_FLOOR_REST, ARMS, JUDGED_HORIZONS (5, 20), DIAGNOSTIC_HORIZONS (60)`.
+- `nw_lag_weeks(h)`; `weekly_percentile(frame, score_col="b1")` (average ties, NaN stays NaN).
+- `gate_arm(arm, cands, cal, T, pi_T, **gate_kwargs)` for arm in `ARMS` (a, b, c): the `run_gate` output columns plus `abstained`, `state_missing`.
+- `run_m2_arms(cands, decision_dates, *, ess_floor=...)` -> dict a, b, c, ungated. `cands` needs `b1, y_net, fill_status, matured_at, regime_posterior, hmm_version`.
+- `arm_counts(log)` (per week, not per row); `judged_window(scored, oos_start, window_weeks)`; `split_judged(log, first_judged_week)`.
+- `go_criteria(log, ungated, decision_dates, h, *, first_judged_week, invariants_passed, n_boot, seed)` -> c1..c5 dicts, `nw_lag_weeks`, `nw_se`, `boot_ci95_block`, `all_pass`.
+- `go_table(logs[impact][arm][h] = (log, ungated), decision_dates, first_judged_week, invariants_passed)`: 12 rows judged on the floor run, zero run reported; refuses h=60, unknown arms, unknown runs (ValueError).
+- `diagnostics_table({(variant, h, arm): log})`: NOT judged (variants atr/hold, h 5/20/60); `diagnostics_13b(log, index_close, decision_dates)`.
+- `hold_to_horizon_label`: the `simulate_trade` signature without `k_s`, `k_t` (A11).
+- `report_header()`, `report_footer()`; `scripts.run_m2.build_parser()` exposes only `--horizon {5,20,60}`, `--impact {zero,floor}`, `--variant {atr,hold}`.
+- Lead decisions: first judged week = `baselines.first_scored_and_judged_week`; arm (b) with no calibration rows abstains; NaN P(state 2) at T = missing -> arm (a) age-only handling, counted and flagged.
