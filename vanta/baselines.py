@@ -48,7 +48,12 @@ B1_PARAMS: dict = {
 # Per-horizon B1 parameters (lead decision 2026-10-31: tuned separately for h=5 and h=20 on fold 0's inner split, because the labels differ).
 # B1_PARAMS is the template. PLACEHOLDERS (= the template) until the tuning job has run; the lead commits the tuned values before the first
 # OOS run. The driver reads this dict only, never the tuning JSON.
-B1_PARAMS_BY_HORIZON: dict = {5: dict(B1_PARAMS), 20: dict(B1_PARAMS)}
+# TUNED 2026-11-01 (jobs baselines_tune_h5 run 20261101_211413, baselines_tune_h20 run 20261101_211847; fold 0 inner split only: fit
+# [2010-01-04, 2014-01-01), evaluate [2014-01-01, 2015-01-01); no OOS year read). Frozen: not to be changed after OOS results are seen.
+B1_PARAMS_BY_HORIZON: dict = {
+    5: {**B1_PARAMS, "depth": 6, "learning_rate": 0.03, "l2_leaf_reg": 10.0},
+    20: {**B1_PARAMS, "depth": 6, "learning_rate": 0.08, "l2_leaf_reg": 10.0},
+}
 
 # The grid the tuning job searches (also fixed here, before any OOS run). Everything not listed stays at B1_PARAMS.
 B1_PARAM_GRID: list = [

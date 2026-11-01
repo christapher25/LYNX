@@ -234,6 +234,7 @@ def test_scorer_feature_is_nan_when_every_scorer_input_is_missing_and_on_zero_va
 
 def test_b1_run_is_refused_while_params_are_the_placeholder(monkeypatch):
     rb = pytest.importorskip("scripts.run_baselines")
+    monkeypatch.setitem(bl.B1_PARAMS_BY_HORIZON, 5, dict(bl.B1_PARAMS))   # the committed dict is tuned since 2026-11-01; simulate the placeholder
     with pytest.raises(SystemExit) as e:
         rb.require_tuned_b1_params(5, mechanics=False)
     assert e.value.code not in (0, None)

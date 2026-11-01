@@ -118,6 +118,62 @@
       "max_hours": 2,
       "log_dir": "logs/jobs"
     },
+    "baselines_tune_h5": {
+      "description": "Stage 14 B1 hyperparameter tuning on fold 0's inner split only, h=5. Prints/writes data/processed/baselines/b1_tuned_h5.json; the lead copies it into vanta.baselines and commits BEFORE the b1 job. Not checkpointed (single pass, rerun from start). User-directed 2026-11-01.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "tune", "--horizon", "5"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_tune_h20": {
+      "description": "Stage 14 B1 hyperparameter tuning on fold 0's inner split only, h=20 (see baselines_tune_h5).",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "tune", "--horizon", "20"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_a0_h5": {
+      "description": "Stage 14 A0 (12-1 momentum) walk-forward OOS, h=5. Writes data/processed/baselines/. Not checkpointed. User-directed 2026-11-01.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "a0", "--horizon", "5"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_a0_h20": {
+      "description": "Stage 14 A0 walk-forward OOS, h=20.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "a0", "--horizon", "20"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_a1_h5": {
+      "description": "Stage 14 A1 (XGBoost + deterministic scorer feature) walk-forward OOS, h=5. Not part of M2 judging.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "a1", "--horizon", "5"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_a1_h20": {
+      "description": "Stage 14 A1 walk-forward OOS, h=20. Not part of M2 judging.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "a1", "--horizon", "20"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_b1_h5": {
+      "description": "Stage 14 B1 (CatBoost, 5 seeds) walk-forward OOS, h=5. Refuses to run with untuned placeholder params: run baselines_tune_h5 and commit the tuned dict first.",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "b1", "--horizon", "5"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
+    "baselines_b1_h20": {
+      "description": "Stage 14 B1 walk-forward OOS, h=20 (see baselines_b1_h5).",
+      "module": "scripts.run_baselines",
+      "args": ["--arm", "b1", "--horizon", "20"],
+      "max_hours": 8,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",
