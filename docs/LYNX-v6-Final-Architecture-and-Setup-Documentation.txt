@@ -1468,6 +1468,19 @@ baseline (CatBoost, walk-forward out-of-sample scores on net labels), under a pr
 committed before any Stage 14 run (docs/vanta/M2_PREREG.md). The 2013-onward window was seen in
 M1 and M1b, so M2 is not a fresh test; the only truly fresh test is the forward paper-trading log.
 
+AMENDMENT 2026-11-01 (project owner's decision): correction of the Stage 7 figure.
+The Stage 7 figure quoted above ("about 4.6% net", later 4.69% over 7,749 rebalances) was produced by
+eval/momentum_baseline.py applying each year's point-in-time universe to every month of that
+year's history, which yields about 21 overlapping copies of roughly 369 distinct months. It is
+withdrawn. On a clean series of 252 monthly rebalances (2005-2025, each month with its own year's
+universe) the net annualised long-short decile spread is 10.58% (Newey-West 95% interval -1.8% to
+23.0%). The long-only top decile earns 17.1% to 19.5% net (17.1% with a full round trip charged,
+19.5% with cost charged on turnover), which is 7.8% a year above the equal-weight universe
+(interval 1.2% to 14.5%). Caveats: same-close entry, no terminal value for delisted names, no
+impact. The Stage 7 GO verdict is not weakened in direction, but its evidence is the long-only
+edge at monthly holding on about 60 names rather than the long-short spread. Record:
+logs/stage7_longonly.md. The legacy code is fixed in a separate commit.
+
 12. Invariants and the silent-failure
 catalogue
 
