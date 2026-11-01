@@ -60,3 +60,13 @@ The 13b diagnostics for every arm and the ungated comparator: weekly false-disco
 ## 8. Reporting
 
 `logs/m2_report.md`. First paragraph: states section 1. Then each criterion with its number for each arm and horizon, comparators, diagnostics, not-applied gates, and the statement that realised FDR is an empirical number, not a guarantee, and q = 0.30 an engineering target. Then STOP; the GO/NO-GO is the owner's.
+
+## 9. Amendment of 2026-11-01 (owner's decision), made BEFORE any tuning, A0, A1 or B1 job ran on real data
+
+No Stage 14 or M2 result had been seen when this was written (commit 51621e6 is the last code commit; no catboost or xgboost fit has run on real data). GO criteria (section 5), arms (section 6), parameters (sections 3 and 4) are unchanged.
+
+**9.1 Judged window (confirmed by the owner).** Judged weeks run from the first B1 test fold (about 2016, as the default 4y/1y/1y folds allow) onward, further limited by section 4 (a B1 out-of-sample score exists and 52 weeks of matured calibration exist). Earlier weeks are reported only.
+
+**9.2 Two added diagnostics, reported for every arm and the ungated comparator, NOT judged, in no GO criterion.** Reason: Stage 7's corrected long-only result shows a momentum edge at monthly holding on about 60 names, while M1b's weekly top 10 with ATR stops lost money.
+- (a) v6 ablation A11: hold-to-horizon (no stop, no target), reported next to the ATR k = 1.5 levels. The exit is the horizon-end close, with the same costs.
+- (b) Horizon h = 60 reported next to h = 5 and h = 20, same weekly decisions, same candidates, gates, costs, q and k.
