@@ -28,7 +28,8 @@
       "module": "data.publication_monitor",
       "args": [],
       "max_hours": 22,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "m1_h5_zero": {
       "description": "Stage 13M M1 run, horizon 5, impact 0 (writes data/processed/m1/, resumable, run the four m1 jobs one at a time: they share cache files)",
@@ -234,7 +235,8 @@
       "args": ["--horizon", "20", "--impact", "floor", "--variant", "hold"],
       "resume_args": ["--horizon", "20", "--impact", "floor", "--variant", "hold"],
       "max_hours": 8,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "m2_h60_floor_hold": {
       "description": "M2 DIAGNOSTIC (NOT JUDGED): A11 hold-to-horizon, h=60, floor.",
@@ -242,7 +244,8 @@
       "args": ["--horizon", "60", "--impact", "floor", "--variant", "hold"],
       "resume_args": ["--horizon", "60", "--impact", "floor", "--variant", "hold"],
       "max_hours": 8,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "m2_h60_floor_atr": {
       "description": "M2 DIAGNOSTIC (NOT JUDGED): h=60 with ATR levels, floor.",
@@ -257,7 +260,8 @@
       "module": "scripts.run_m2",
       "args": ["--report"],
       "max_hours": 2,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
