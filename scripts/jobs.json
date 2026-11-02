@@ -119,6 +119,21 @@
       "max_hours": 2,
       "log_dir": "logs/jobs"
     },
+    "announcements_reresolve": {
+      "description": "Row 16: re-resolve already-saved announcement files through the point-in-time ISIN bridge (no network; only unresolved symbol_not_in_master / symbol_outside_traded_window rows with an ISIN; atomic, resumable, idempotent). Builds the symbol master first (~2.5 min). Never run alongside an M3 job.",
+      "module": "data.isin_bridge",
+      "args": ["--re-resolve"],
+      "resume_args": ["--re-resolve"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "verify_stage16_announcements": {
+      "description": "Stage 16 announcements verifier (per-year counts, bridged and unresolved-by-reason counts, independent PIT check of bridged records).",
+      "module": "scripts.verify_stage16_announcements",
+      "args": [],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
     "baselines_tune_h5": {
       "description": "Stage 14 B1 hyperparameter tuning on fold 0's inner split only, h=5. Prints/writes data/processed/baselines/b1_tuned_h5.json; the lead copies it into vanta.baselines and commits BEFORE the b1 job. Not checkpointed (single pass, rerun from start). User-directed 2026-11-01.",
       "module": "scripts.run_baselines",
@@ -262,6 +277,117 @@
       "max_hours": 2,
       "log_dir": "logs/jobs",
       "parallel_ok": true
+    },
+    "m3_tune_h5": {
+      "description": "M3 B1 tuning on hold-to-horizon labels, fold 0 inner split only, h=5. Writes data/processed/m3/b1hold_tuned_h5.json; the lead pastes it into vanta.m3.B1_HOLD_PARAMS_BY_HORIZON and commits BEFORE the score job. Owner 2026-11-02.",
+      "module": "scripts.run_m3",
+      "args": ["--tune", "--horizon", "5"],
+      "resume_args": ["--tune", "--horizon", "5"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_tune_h20": {
+      "description": "M3 B1 tuning on hold-to-horizon labels, fold 0 inner split only, h=20.",
+      "module": "scripts.run_m3",
+      "args": ["--tune", "--horizon", "20"],
+      "resume_args": ["--tune", "--horizon", "20"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_tune_h60": {
+      "description": "M3 B1 tuning on hold-to-horizon labels, fold 0 inner split only, h=60 (own tuning, not reusing h=20).",
+      "module": "scripts.run_m3",
+      "args": ["--tune", "--horizon", "60"],
+      "resume_args": ["--tune", "--horizon", "60"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_score_h5": {
+      "description": "M3 B1 walk-forward OOS scoring on hold labels, h=5 (reported, not judged). Refuses while the horizon's params are the placeholder.",
+      "module": "scripts.run_m3",
+      "args": ["--score", "--horizon", "5"],
+      "resume_args": ["--score", "--horizon", "5"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "m3_score_h20": {
+      "description": "M3 B1 walk-forward OOS scoring on hold labels, h=20 (judged).",
+      "module": "scripts.run_m3",
+      "args": ["--score", "--horizon", "20"],
+      "resume_args": ["--score", "--horizon", "20"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "m3_score_h60": {
+      "description": "M3 B1 walk-forward OOS scoring on hold labels, h=60 (judged).",
+      "module": "scripts.run_m3",
+      "args": ["--score", "--horizon", "60"],
+      "resume_args": ["--score", "--horizon", "60"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h5_floor": {
+      "description": "M3 gate cell, h=5, floor (reported, NOT JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "5", "--impact", "floor"],
+      "resume_args": ["--horizon", "5", "--impact", "floor"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h5_zero": {
+      "description": "M3 gate cell, h=5, zero impact (reported, NOT JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "5", "--impact", "zero"],
+      "resume_args": ["--horizon", "5", "--impact", "zero"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h20_floor": {
+      "description": "M3 gate cell, h=20, floor (JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "20", "--impact", "floor"],
+      "resume_args": ["--horizon", "20", "--impact", "floor"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h20_zero": {
+      "description": "M3 gate cell, h=20, zero impact (reported, NOT JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "20", "--impact", "zero"],
+      "resume_args": ["--horizon", "20", "--impact", "zero"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h60_floor": {
+      "description": "M3 gate cell, h=60, floor (JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "60", "--impact", "floor"],
+      "resume_args": ["--horizon", "60", "--impact", "floor"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_h60_zero": {
+      "description": "M3 gate cell, h=60, zero impact (reported, NOT JUDGED).",
+      "module": "scripts.run_m3",
+      "args": ["--horizon", "60", "--impact", "zero"],
+      "resume_args": ["--horizon", "60", "--impact", "zero"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "m3_report": {
+      "description": "Assemble logs/m3_report.md from the saved M3 cells (runs the invariant suite for criterion 1).",
+      "module": "scripts.run_m3",
+      "args": ["--report"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "paper_log_weekly": {
+      "description": "Forward paper log (row 19): append the latest decision week's B1 hold-to-horizon candidates and the three arms' publications (h=20, h=60) to the append-only files under data/processed/paper_log/; fills matured outcomes in a separate append-only file. Resumable, idempotent; refuses if input data is stale. Writes only data/processed/paper_log/ and models/. Run Sunday or Monday before the open. Owner 2026-11-02.",
+      "module": "scripts.run_paper_log",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
     },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",

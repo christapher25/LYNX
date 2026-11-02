@@ -232,3 +232,30 @@ Tests: `tests/test_m2_invariants.py`, `tests/test_m2_driver.py` (reference toy i
 - `hold_to_horizon_label`: the `simulate_trade` signature without `k_s`, `k_t` (A11).
 - `report_header()`, `report_footer()`; `scripts.run_m2.build_parser()` exposes only `--horizon {5,20,60}`, `--impact {zero,floor}`, `--variant {atr,hold}`.
 - Lead decisions: first judged week = `baselines.first_scored_and_judged_week`; arm (b) with no calibration rows abstains; NaN P(state 2) at T = missing -> arm (a) age-only handling, counted and flagged.
+
+## 9. `vanta.m3`, `scripts.run_m3` (Stage 13M, M3; owner quant-m3; names proposed to test-m3 2026-11-02)
+
+Authority: `docs/vanta/M3_PREREG.md`. Everything the pre-registration leaves unchanged is imported from `vanta.m2` / `vanta.baselines` / `vanta.m1`, not redefined.
+
+`vanta.m3`:
+- Constants: `JUDGED_HORIZONS (20, 60)`, `REPORTED_HORIZONS (5,)`, `ALL_HORIZONS (5, 20, 60)`, `IMPACTS`, `ARMS = m2.ARMS`, `Q, CAP, TAU_WEEKS, ESS_FLOOR, WINDOW_WEEKS` (= m2's), `MODEL_VERSION = "b1-hold@m3"`, `B1_HOLD_GRID` (is `baselines.B1_PARAM_GRID`).
+- `B1_HOLD_PARAMS_BY_HORIZON` (keys 5, 20, 60). PLACEHOLDER (= `baselines.B1_PARAMS`) until the lead commits the tuned values from `data/processed/m3/b1hold_tuned_h{H}.json`.
+- `hold_params(h)` (ValueError for another horizon; h=60 never falls back to h=20), `is_placeholder(h)`, `require_tuned_hold_params(h, mechanics=False)` (ValueError while placeholder; allowed with `mechanics=True`).
+- `is_judged(impact, h)`: True only for `floor` at h in (20, 60); ValueError for another impact.
+- `go_table(logs, decision_dates, first_judged_week, invariants_passed, n_boot, seed)`: `logs[impact][arm][h] = (gate_log, ungated_log)`, `decision_dates[h]`, `first_judged_week[h]` are dicts keyed by horizon. Criteria are `m2.go_criteria` (NW lag and bootstrap block ceil(h/5)); `go_all` is a bool only where `is_judged`, else None.
+- `year_table(log)` (cols year, n_filled, n_losers, fdr, net_per_signal; filled published rows with a finite label), `publication_rate_by_year(log, decision_dates)`, `hold_label_source_fp()`, `report_header()` (M3_PREREG s1), `report_footer()`.
+
+`scripts.run_m3` (outputs ONLY under `data/processed/m3[_tag]/`, never m2/, m1b/, baselines/):
+- `--tune --horizon H`: B1 search on fold 0's inner split (labels and features built for decision dates before fold 0's test year only); writes `b1hold_tuned_h{H}.json`.
+- `--score --horizon H`: walk-forward OOS B1 scores on hold labels; refused (SystemExit) while the horizon is a placeholder unless `--mechanics-check`; writes `scored_b1hold_h{H}.parquet`, `fold_report_b1hold_h{H}.json`, `report_b1hold_h{H}.md`.
+- `--horizon H --impact {floor,zero}`: the cell (arms a, b, c and ungated): `log_h{H}_{impact}_{arm}.parquet`, `meta_h{H}_{impact}.json` (written last; skipped when its fingerprint matches).
+- `--report`: `logs/m3_report.md` (also `m3_go_table.csv`, `m3_year_table.csv`).
+- Helpers: `build_parser()`, `out_dir_for(tag)`, `stem(h, impact)`, `scored_name(h, mechanics)`, `hold_label_dir(h)`, `build_hold_labels(cands, h, sessions, terminal)`, `feature_panel(df, sessions, cand_name, out_dir)`, `_fingerprint`, `cell_is_current`, `report(tag, n_boot, invariants)`.
+- A0 and A1 are not rerun for M3: A0 does not depend on labels (its M2 scores are unchanged), A1 is not part of the M3 pre-registration.
+
+### 9a. `vanta.paper_log`, `scripts.run_paper_log` (forward paper log; contract = `tests/test_paper_log.py`, written by test-m3; implemented by quant-m3)
+
+Files under `data/processed/paper_log/` (append-only JSON lines; the only way a file changes is one flushed append): `decisions.jsonl` (one row per candidate x horizon, no outcome field), `outcomes.jsonl` (matured, filled, finite outcomes), `unfilled.jsonl` (NO_FILL_*, NO_DATA), `runs.jsonl` (driver audit trail incl. refusals, code state, per-date block sha256), `models/` (live CatBoost models and annual HMM parameters, written once), `cache/`.
+
+`vanta.paper_log`: `PaperLogError`, `StaleDataError`; `append_decisions(log_dir, decision_date, candidates, *, model_version, code_version, data_asof) -> "APPENDED"|"NOOP"` (candidates need `symbol`, `published`; optional `horizon` makes (symbol, horizon) the key; different content for a date on file raises; stale or unknown `data_asof` raises before anything is created); `append_outcomes(log_dir, labels, asof) -> int` (matured_at <= asof and finite y_net only, never twice; an outcome without a decision raises); `append_unfilled(...)`; `calibration_summary(log_dir, asof, window_weeks=52, min_rows=30)`; `calibration_frame(log_dir, horizon, asof)` (gate format, matured logged rows only, logged percentile and logged regime posterior); `calibration_status(log_dir, horizon, T)` (SUFFICIENT iff the first logged decision of the horizon is >= 52 weeks before T and a matured outcome is usable); `publications(horizon, cands, cal, T, pi_T, status)` (arms a, b, c via `m2.gate_arm`; not run, flags None, when INSUFFICIENT_CALIBRATION; ungated top 10 always); `refit_date(T, sessions)` (quarterly), `training_window`, `latest_complete_decision_date`, `freshness_problems`, `param_hash`, `code_version`, `code_version_string`, `read_decisions`, `read_outcomes`, `pending_keys`.
+`scripts.run_paper_log`: `--stage {all,outcomes,models,decide}`, `--decision-date`, `--allow-late`, `--check`; exit 0 ok / NOOP, 2 placeholder params, 3 refused (reasons logged and in runs.jsonl).
