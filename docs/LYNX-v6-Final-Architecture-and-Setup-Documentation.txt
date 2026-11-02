@@ -1481,6 +1481,22 @@ impact. The Stage 7 GO verdict is not weakened in direction, but its evidence is
 edge at monthly holding on about 60 names rather than the long-short spread. Record:
 logs/stage7_longonly.md. The legacy code is fixed in a separate commit.
 
+AMENDMENT 2026-11-02 (project owner's decision): M2 verdict and the A11 kill rule applied.
+M2 (gate scored by the Stage 14 B1 baseline, docs/vanta/M2_PREREG.md, record logs/m2_report.md,
+kept unchanged) was run on 2026-11-02 and judged NO-GO as pre-registered: criteria 2, 3 and 4 fail on
+every arm (criterion 4 passes only for arm b at h=20). The ablation A11 diagnostic (hold to horizon,
+no stop, no target, same costs; reported, not judged) shows that stops and targets destroy expected
+value at the longer horizons: at h=20 the gated net per signal is 0.0219 (arm a) with hold against
+0.0007 with ATR k=1.5 levels, and at h=60 0.0745 against -0.0037; the ungated top 10 shows the same
+ordering (h=20 0.0059 against -0.0044; h=60 0.0301 against -0.0046). At h=5 hold is not better.
+The kill rule in the A11 row ("ATR levels kept if A11 shows stops/targets don't destroy expected
+value") therefore applies: ATR stop and target exits are dropped from the gate test pending M3, whose
+labels are hold to horizon (entry at next open, exit at the horizon-end close, same costs, locks and
+no-fill rules). Section 9.4 (published levels equal the label levels) is not applied to the gate test
+until M3 reports. Whether the product displays stop and target levels at all is deferred to the
+project owner and the supervisor. The 2016-onward window was seen in M1, M1b and M2, so M3 is a
+re-test; the forward paper log is the only fresh test. M3 pre-registration: docs/vanta/M3_PREREG.md.
+
 12. Invariants and the silent-failure
 catalogue
 
