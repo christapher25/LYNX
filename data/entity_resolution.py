@@ -37,9 +37,11 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
+from data import isin_bridge
+
 UNRESOLVED = "unresolved"
 RESOLUTION_COLUMNS = ["TICKER", "RESOLUTION_METHOD", "UNRESOLVED_REASON"]
-REASONS = ("symbol_isin_conflict", "symbol_not_in_master", "symbol_outside_traded_window", "isin_ambiguous", "name_ambiguous", "unmatched")
+REASONS = ("symbol_isin_conflict", "symbol_not_in_master", "symbol_outside_traded_window", "isin_ambiguous", "name_ambiguous", "unmatched") + isin_bridge.BRIDGE_REASONS
 
 PRE_LISTING_SLACK = timedelta(days=30)        # an announcement may precede the first session (IPO / listing notices)
 POST_DELISTING_SLACK = timedelta(days=365)    # delisting / merger notices follow the last session
@@ -110,6 +112,12 @@ class SymbolMaster:
     def symbol_count(self) -> int:
         return len(self._symbols)
 
+    def fingerprint(self) -> dict:
+        """Identity of the master's content: symbol count, latest last-session date, number of ISIN windows."""
+        last = max((hi for ws in self._windows.values() for _, hi in ws), default=None)
+        return {"symbols": len(self._symbols), "max_last_date": last.isoformat() if last else None,
+                "isin_windows": sum(len(v) for v in self._by_isin.values())}
+
 
 def split_at_gaps(days: pd.Series | pd.DatetimeIndex, max_gap: int = NAN_ISIN_MAX_GAP_DAYS) -> list[tuple[date, date]]:
     """Sorted distinct days -> (first, last) windows, split wherever two consecutive days are more than max_gap apart."""
@@ -146,15 +154,20 @@ def build_symbol_master(bhavcopy_dir: Path) -> SymbolMaster:
     return SymbolMaster.from_frame(frame)
 
 
-def _resolve_one(symbol, isin, name, day, master: SymbolMaster, name_index: dict[str, set[str]]):
+def _resolve_one(symbol, isin, name, day, master: SymbolMaster, name_index: dict[str, set[str]], use_bridge: bool = False):
     sym, isin = _clean_symbol(symbol), _clean_isin(isin)
     when = None if day is None or pd.isna(day) else pd.Timestamp(day).date()
 
     if sym is not None:
-        if not master.has_symbol(sym):
-            return None, UNRESOLVED, "symbol_not_in_master"
-        if not master.traded_near(sym, when):
-            return None, UNRESOLVED, "symbol_outside_traded_window"
+        failed = ("symbol_not_in_master" if not master.has_symbol(sym)
+                  else None if master.traded_near(sym, when) else "symbol_outside_traded_window")
+        if failed is not None:
+            if use_bridge and isin is not None:                    # row 16: renamed company, ISIN -> symbol valid on `when`
+                bridged, reason = isin_bridge.bridge_isin(isin, when, master)
+                if bridged is not None:
+                    return bridged, isin_bridge.BRIDGE_METHOD, None
+                return None, UNRESOLVED, reason
+            return None, UNRESOLVED, failed
         if isin is not None:
             known = {s for s, _, _ in master.symbols_for_isin(isin)}
             if known and sym not in known:
@@ -184,7 +197,7 @@ def _resolve_one(symbol, isin, name, day, master: SymbolMaster, name_index: dict
     return None, UNRESOLVED, "unmatched"
 
 
-def resolve(frame: pd.DataFrame, master: SymbolMaster, name_index: dict[str, set[str]]) -> pd.DataFrame:
+def resolve(frame: pd.DataFrame, master: SymbolMaster, name_index: dict[str, set[str]], use_isin_bridge: bool = False) -> pd.DataFrame:
     """
     Return a copy of `frame` with TICKER, RESOLUTION_METHOD, UNRESOLVED_REASON appended. Needs SYMBOL_RAW, ISIN,
     COMPANY_NAME and PUBLISHED_DATE columns. Row order is preserved.
@@ -192,7 +205,7 @@ def resolve(frame: pd.DataFrame, master: SymbolMaster, name_index: dict[str, set
     out = frame.copy()
     tickers, methods, reasons = [], [], []
     for symbol, isin, name, day in frame[["SYMBOL_RAW", "ISIN", "COMPANY_NAME", "PUBLISHED_DATE"]].itertuples(index=False):
-        t, m, r = _resolve_one(symbol, isin, name, day, master, name_index)
+        t, m, r = _resolve_one(symbol, isin, name, day, master, name_index, use_isin_bridge)
         tickers.append(t)
         methods.append(m)
         reasons.append(r)

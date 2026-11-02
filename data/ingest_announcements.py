@@ -194,8 +194,8 @@ def build_chunk_frame(payload, start: date, end: date, master: SymbolMaster) -> 
     records = parse_announcements(payload, start, end)
     if records.empty:
         return records.assign(**{c: pd.Series(dtype="string") for c in RESOLUTION_COLUMNS})[OUTPUT_COLUMNS]
-    first = resolve(records, master, {})
-    return resolve(records, master, build_name_index(first))[OUTPUT_COLUMNS]
+    first = resolve(records, master, {}, use_isin_bridge=True)
+    return resolve(records, master, build_name_index(first), use_isin_bridge=True)[OUTPUT_COLUMNS]
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ def announcement_invariant_violations(df: pd.DataFrame, master: SymbolMaster | N
     flag("resolved_without_ticker", ~unresolved & df["TICKER"].isna())
     flag("unresolved_without_reason", unresolved & df["UNRESOLVED_REASON"].isna())
     flag("resolved_with_reason", ~unresolved & df["UNRESOLVED_REASON"].notna())
-    flag("unknown_method", ~df["RESOLUTION_METHOD"].isin(["symbol", "isin", "name", "unresolved"]))
+    flag("unknown_method", ~df["RESOLUTION_METHOD"].isin(["symbol", "isin", "isin_bridge", "name", "unresolved"]))
     if master is not None:
         flag("ticker_not_in_master", df["TICKER"].notna() & ~df["TICKER"].fillna("").map(master.has_symbol))
 

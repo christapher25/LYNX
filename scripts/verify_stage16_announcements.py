@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import ANNOUNCEMENTS_DIR, BHAVCOPY_DIR
 from data import ingest_announcements as ia
+from data import isin_bridge
 from data.entity_resolution import build_symbol_master
 
 READ_COLUMNS = [c for c in ia.OUTPUT_COLUMNS if c not in ("TEXT", "ATTACHMENT_URL")]
@@ -100,6 +101,9 @@ def main() -> int:
     first_day = last_day = None
     total = 0
     sample = None
+    bridged_total = 0
+    bridge_pit_bad = 0
+    bridge_unres: dict[str, int] = {}
 
     for a, b, f in ranges:
         df = pd.read_parquet(f, columns=READ_COLUMNS)
@@ -125,9 +129,20 @@ def main() -> int:
             reasons[str(reason)] = reasons.get(str(reason), 0) + int(n)
         unresolved_parts.append(unresolved.groupby(["UNRESOLVED_REASON", "SYMBOL_RAW", "ISIN", "COMPANY_NAME"], dropna=False)
                                 .size().rename("RECORDS").reset_index())
+        bridged = df[df["RESOLUTION_METHOD"] == "isin_bridge"]
+        bridged_total += len(bridged)
+        for _, r in bridged.iterrows():                       # independent PIT check: the ISIN's window for TICKER holds the date
+            day = pd.Timestamp(r["PUBLISHED_DATE"]).date()
+            if not isin_bridge.pit_window_ok(r["TICKER"], r["ISIN"], day, master):
+                bridge_pit_bad += 1
+        for reason, n in unresolved["UNRESOLVED_REASON"].value_counts().items():
+            if str(reason).startswith("bridge_"):
+                bridge_unres[str(reason)] = bridge_unres.get(str(reason), 0) + int(n)
         if sample is None and df["TICKER"].notna().any() and (df["RESOLUTION_METHOD"] == "unresolved").any():
             sample = df
 
+    if bridge_pit_bad:
+        failures.append(f"{bridge_pit_bad} isin_bridge records whose ISIN window for the ticker does not contain the publication date")
     if violations:
         failures.append(f"invariant violations on real data: {violations}")
 
@@ -137,7 +152,7 @@ def main() -> int:
                           .sum().reset_index().sort_values("RECORDS", ascending=False))
     unresolved_all.to_csv(directory / "_unresolved_summary.csv", index=False)
 
-    untagged = total - methods.get("symbol", 0) - methods.get("isin", 0) - methods.get("name", 0) - methods.get("unresolved", 0)
+    untagged = total - methods.get("symbol", 0) - methods.get("isin", 0) - methods.get("name", 0) - methods.get("isin_bridge", 0) - methods.get("unresolved", 0)
     if untagged:
         failures.append(f"{untagged} records are neither ticker-tagged nor flagged unresolved")
 
@@ -167,6 +182,8 @@ def main() -> int:
     logger.info(f"files={len(ranges)} records={total:,} broadcast range {first_day} .. {last_day}")
     logger.info(f"ticker-tagged={resolved:,} ({resolved / total:.2%}) methods={methods}")
     logger.info(f"unresolved={methods.get('unresolved', 0):,} by reason={reasons}")
+    logger.info(f"resolved by ISIN bridge={bridged_total:,}; unresolved after bridge by reason={bridge_unres}; "
+                f"unresolved with no ISIN to bridge={sum(n for r, n in reasons.items() if not r.startswith('bridge_') and r in ('symbol_not_in_master', 'symbol_outside_traded_window')):,}")
     logger.info("rows per publication year: " + ", ".join(f"{y}={n:,}" for y, n in sorted(per_year.items())))
     logger.info(f"distinct unresolved identities listed in {directory / '_unresolved_summary.csv'}: {len(unresolved_all):,}")
 
