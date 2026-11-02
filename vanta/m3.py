@@ -45,10 +45,13 @@ B1_HOLD_GRID = bl.B1_PARAM_GRID
 # h = 60 is tuned on its own fold 0 and does not reuse h = 20). PLACEHOLDERS (= the CatBoost template) until the tuning jobs have run;
 # the lead replaces each entry with the output of `python -m scripts.run_m3 --tune --horizon H` (data/processed/m3/b1hold_tuned_h{H}.json)
 # and commits it BEFORE the first out-of-sample run. Frozen after that: never changed once an OOS result has been seen.
+# Tuned 2026-11-02 by `python -m scripts.run_m3 --tune --horizon H` (jobs m3_tune_h5 run 20261102_110625, m3_tune_h20 run 20261102_111123,
+# m3_tune_h60 run 20261102_111431) on fold 0's inner split only, hold-to-horizon labels, the M2 grid and selection rule. Each horizon was tuned
+# on its own (h=60 does not reuse h=20). Committed BEFORE any out-of-sample M3 run; not to be changed after results are seen.
 B1_HOLD_PARAMS_BY_HORIZON: dict = {
-    5: dict(bl.B1_PARAMS),
-    20: dict(bl.B1_PARAMS),
-    60: dict(bl.B1_PARAMS),
+    5: {**bl.B1_PARAMS, "depth": 4, "learning_rate": 0.08, "l2_leaf_reg": 3.0},
+    20: {**bl.B1_PARAMS, "depth": 4, "learning_rate": 0.08, "l2_leaf_reg": 3.0},
+    60: {**bl.B1_PARAMS, "depth": 4, "learning_rate": 0.03, "l2_leaf_reg": 10.0},
 }
 
 
