@@ -125,14 +125,16 @@
       "args": ["--re-resolve"],
       "resume_args": ["--re-resolve"],
       "max_hours": 1,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "verify_stage16_announcements": {
       "description": "Stage 16 announcements verifier (per-year counts, bridged and unresolved-by-reason counts, independent PIT check of bridged records).",
       "module": "scripts.verify_stage16_announcements",
       "args": [],
       "max_hours": 1,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "baselines_tune_h5": {
       "description": "Stage 14 B1 hyperparameter tuning on fold 0's inner split only, h=5. Prints/writes data/processed/baselines/b1_tuned_h5.json; the lead copies it into vanta.baselines and commits BEFORE the b1 job. Not checkpointed (single pass, rerun from start). User-directed 2026-11-01.",
@@ -400,7 +402,8 @@
       "args": [],
       "resume_args": [],
       "max_hours": 3,
-      "log_dir": "logs/jobs"
+      "log_dir": "logs/jobs",
+      "parallel_ok": true
     },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
