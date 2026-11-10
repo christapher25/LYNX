@@ -260,3 +260,22 @@ def test_no_network_or_literal_data_path_in_source():
     src = (ROOT / "scripts" / "apply_corp_action_correction.py").read_text(encoding="utf-8")
     assert "requests." not in src and "print(" not in src
     assert "raw/corporate_actions" not in src and "raw\\corporate_actions" not in src
+
+
+# Round 1: the stored pandas metadata block is kept, so a corrected file reads back with the dtypes of an untouched one ------
+@pytest.mark.parametrize("records,entries", [([DIV], [DIV_E]), ([DIV, BONUS], [DIV_E, BONUS_E]), ([BONUS], [BONUS_E])])
+def test_round1_pandas_metadata_and_dtypes_are_kept(env, records, entries):
+    seed(env, "AAA")
+    path = env.out / "AAA.parquet"
+    stored = pq.read_schema(path)
+    assert b"pandas" in stored.metadata
+    before = pd.read_parquet(path).dtypes
+    env.fake.records = {("AAA", 2026): OLD + records}
+    assert run(env, entries) == 0
+    assert b"pandas" in pq.read_schema(path).metadata
+    after_schema = pq.read_schema(path)
+    after = pd.read_parquet(path).dtypes
+    gained = {f.name for f in stored if f.type == pa.null() and after_schema.field(f.name).type != pa.null()}
+    for col in before.index:
+        if col not in gained:
+            assert after[col] == before[col], f"{col}: {before[col]} -> {after[col]}"

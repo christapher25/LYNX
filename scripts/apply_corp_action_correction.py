@@ -92,7 +92,8 @@ def _typed_table(stored: pa.Schema, merged: pd.DataFrame) -> pa.Table:
         elif col.null_count == len(col):
             col = col.cast(pa.null())
         cols.append(col)
-    return pa.Table.from_arrays(cols, names=stored.names)
+    # carry the stored schema metadata (the pandas block) so the file reads back with the dtypes of an untouched one
+    return pa.Table.from_arrays(cols, names=stored.names).replace_schema_metadata(stored.metadata)
 
 
 def _write_table_atomic(table: pa.Table, path: Path) -> None:
