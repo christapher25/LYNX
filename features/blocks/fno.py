@@ -293,7 +293,7 @@ def _save_checkpoint(completed: set[str]) -> None:
 
 
 def run_fno_pipeline(resume: bool = True, start=None, end=None, symbols: list[str] | None = None,
-                     output_dir: Path | None = None) -> dict:
+                     output_dir: Path | None = None, list_orphans_only: bool = False) -> dict:
     """
     Compute and write F&O features, one Parquet per symbol.
 
@@ -307,7 +307,7 @@ def run_fno_pipeline(resume: bool = True, start=None, end=None, symbols: list[st
     universe = list_universe_symbols()
     chosen = universe if symbols is None else [s for s in symbols if s in set(universe)]
     if not scoped:
-        prune_orphaned_symbol_files(target, universe)
+        prune_orphaned_symbol_files(target, universe, list_only=list_orphans_only)
     completed = _load_checkpoint() if (resume and not scoped) else set()
     remaining = [s for s in chosen if s not in completed]
 
@@ -351,7 +351,9 @@ if __name__ == "__main__":
     parser.add_argument("--end", help="scoped run: last date to write")
     parser.add_argument("--symbols", nargs="*", help="scoped run: only these symbols")
     parser.add_argument("--output-dir", type=Path, help="scoped run: write here instead of FNO_FEATURES_DIR")
+    parser.add_argument("--list-orphans-only", action="store_true", help="orphans are listed, not deleted; normal processing continues")
     args = parser.parse_args()
     if (args.start or args.end or args.symbols) and args.output_dir is None:
         parser.error("a scoped run (--start/--end/--symbols) must name --output-dir; it never overwrites the real block")
-    run_fno_pipeline(resume=not args.no_resume, start=args.start, end=args.end, symbols=args.symbols, output_dir=args.output_dir)
+    run_fno_pipeline(resume=not args.no_resume, start=args.start, end=args.end, symbols=args.symbols, output_dir=args.output_dir,
+                     list_orphans_only=args.list_orphans_only)

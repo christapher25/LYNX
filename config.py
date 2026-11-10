@@ -37,6 +37,7 @@ LOG_DIR = PROJECT_ROOT / "logs"
 # Measured publication times of daily sources (data/publication_monitor.py): append-only first-seen evidence.
 PUBLICATION_LOG_DIR = RAW_DATA_DIR / "_publication"
 
+CORPORATE_ACTIONS_DIR = RAW_DATA_DIR / "corporate_actions"   # per-symbol raw corporate-action files (Stage 4 input)
 CORPORATE_ACTIONS_LOG = PROCESSED_DATA_DIR / "corporate_actions.parquet"
 PIT_FEATURE_STORE = PROCESSED_DATA_DIR / "pit_features.parquet"
 

@@ -290,7 +290,7 @@ def write_indicators(conn, symbol: str, indicators: pd.DataFrame) -> None:
         cur.copy_expert(f"COPY {INDICATORS_TABLE} ({columns}) FROM STDIN WITH (FORMAT csv, NULL '')", buf)
 
 
-def prune_orphaned_symbols(conn, symbols: list[str]) -> list[str]:
+def prune_orphaned_symbols(conn, symbols: list[str], list_only: bool = False) -> list[str]:
     """
     Delete indicator rows for any symbol no longer in the current universe. A symbol can legitimately fall
     out of every year's top-700 turnover ranking when Stage 5 is rebuilt with corrected point-in-time data
@@ -300,11 +300,17 @@ def prune_orphaned_symbols(conn, symbols: list[str]) -> list[str]:
     forever with nothing marking them stale, which is exactly the silent-failure class this project exists
     to avoid. Symbols are deleted individually (not a single NOT IN query) so this reads the same as, and
     stays consistent with, write_indicators' own per-symbol delete.
+
+    list_only=True (--list-orphans-only): log and return the orphans, delete nothing.
     """
     with conn, conn.cursor() as cur:
         cur.execute(f"SELECT DISTINCT symbol FROM {INDICATORS_TABLE}")
         in_db = {row[0] for row in cur.fetchall()}
         orphaned = sorted(in_db - set(symbols))
+        if list_only:
+            if orphaned:
+                logger.warning(f"{len(orphaned)} orphan symbol(s) not in the universe (--list-orphans-only, NOT deleted): {orphaned[:10]}")
+            return orphaned
         for symbol in orphaned:
             cur.execute(f"DELETE FROM {INDICATORS_TABLE} WHERE symbol = %s", (symbol,))
     if orphaned:
@@ -326,7 +332,7 @@ def _save_checkpoint(completed: set[str]) -> None:
     }))
 
 
-def run_indicators_pipeline(resume: bool = True) -> None:
+def run_indicators_pipeline(resume: bool = True, list_orphans_only: bool = False) -> None:
     """
     Batch driver: compute and write indicators for every symbol in the
     historical universe. Checkpoints after every symbol so an interrupted run
@@ -346,7 +352,7 @@ def run_indicators_pipeline(resume: bool = True) -> None:
     conn = get_db_connection()
     try:
         ensure_indicators_table(conn)
-        prune_orphaned_symbols(conn, symbols)
+        prune_orphaned_symbols(conn, symbols, list_only=list_orphans_only)
         for symbol in tqdm(remaining, desc="computing indicators"):
             try:
                 prices = load_adjusted_prices(symbol)
@@ -379,5 +385,6 @@ def run_indicators_pipeline(resume: bool = True) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LYNX Stage 9 — technical indicators engine")
     parser.add_argument("--no-resume", action="store_true", help="ignore checkpoint, recompute all")
+    parser.add_argument("--list-orphans-only", action="store_true", help="orphans are listed, not deleted; normal processing continues")
     args = parser.parse_args()
-    run_indicators_pipeline(resume=not args.no_resume)
+    run_indicators_pipeline(resume=not args.no_resume, list_orphans_only=args.list_orphans_only)

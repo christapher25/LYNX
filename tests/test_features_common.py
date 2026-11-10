@@ -71,3 +71,71 @@ class TestPruneOrphanedSymbolFiles:
         pruned = prune_orphaned_symbol_files(tmp_path, ["RELIANCE"])
         assert pruned == []
         assert (tmp_path / "README.md").exists()
+
+
+class TestListOrphansOnly:
+    """--list-orphans-only: report orphans, delete nothing. The default (deleting) behaviour is covered above."""
+
+    def test_list_only_keeps_the_orphan_file_and_reports_it(self, tmp_path):
+        for sym in ("RELIANCE", "RATNAVEER"):
+            (tmp_path / f"{sym}.parquet").write_bytes(b"x")
+        orphans = prune_orphaned_symbol_files(tmp_path, ["RELIANCE"], list_only=True)
+        assert orphans == ["RATNAVEER"]
+        assert (tmp_path / "RATNAVEER.parquet").read_bytes() == b"x"
+        assert (tmp_path / "RELIANCE.parquet").exists()
+
+    def test_list_only_logs_the_orphans(self, tmp_path):
+        from loguru import logger
+        (tmp_path / "RATNAVEER.parquet").write_bytes(b"")
+        msgs = []
+        sink = logger.add(lambda m: msgs.append(str(m)), level="WARNING")
+        try:
+            prune_orphaned_symbol_files(tmp_path, [], list_only=True)
+        finally:
+            logger.remove(sink)
+        assert any("RATNAVEER" in m for m in msgs)
+
+    def test_default_still_deletes(self, tmp_path):
+        (tmp_path / "RATNAVEER.parquet").write_bytes(b"")
+        assert prune_orphaned_symbol_files(tmp_path, []) == ["RATNAVEER"]
+        assert not (tmp_path / "RATNAVEER.parquet").exists()
+
+
+import inspect as _inspect
+import subprocess as _subprocess
+import sys as _sys
+
+import pytest as _pytest
+
+_BLOCKS = ["delivery", "pledging", "circuits", "fno"]
+
+
+class TestPipelinesExposeTheFlag:
+    @_pytest.mark.parametrize("block", _BLOCKS)
+    def test_runner_has_list_orphans_only_defaulting_false(self, block):
+        import importlib
+        mod = importlib.import_module(f"features.blocks.{block}")
+        fn = getattr(mod, f"run_{block}_pipeline")
+        param = _inspect.signature(fn).parameters["list_orphans_only"]
+        assert param.default is False
+
+    @_pytest.mark.parametrize("block", _BLOCKS)
+    def test_cli_accepts_the_exact_flag_and_forwards_list_only(self, block):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "features" / "blocks" / f"{block}.py").read_text(encoding="utf-8")
+        assert '"--list-orphans-only"' in src
+        assert "list_only=list_orphans_only" in src
+
+    @_pytest.mark.parametrize("block", _BLOCKS)
+    def test_help_lists_the_flag(self, block):
+        out = _subprocess.run([_sys.executable, "-m", f"features.blocks.{block}", "--help"],
+                              capture_output=True, text=True, timeout=120)
+        assert out.returncode == 0 and "--list-orphans-only" in out.stdout
+
+
+class TestFlagHelpTextIsExplicit:
+    @_pytest.mark.parametrize("module", [f"features.blocks.{b}" for b in _BLOCKS] + ["signals.indicators"])
+    def test_help_says_orphans_are_listed_not_deleted_and_processing_continues(self, module):
+        out = _subprocess.run([_sys.executable, "-m", module, "--help"], capture_output=True, text=True, timeout=120)
+        assert out.returncode == 0
+        assert "orphans are listed, not deleted; normal processing continues" in " ".join(out.stdout.split())

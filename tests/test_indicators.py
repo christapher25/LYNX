@@ -243,3 +243,25 @@ class TestPruneOrphanedSymbols:
         conn, cur = self._mock_conn(["ZULU", "RELIANCE", "ALPHA"])
         pruned = prune_orphaned_symbols(conn, ["RELIANCE"])
         assert pruned == ["ALPHA", "ZULU"]
+
+class TestListOrphansOnlyIndicators:
+    """--list-orphans-only: report orphan symbols, delete nothing."""
+
+    def test_list_only_reports_but_never_deletes(self):
+        conn, cur = TestPruneOrphanedSymbols()._mock_conn(["RELIANCE", "RATNAVEER"])
+        orphans = prune_orphaned_symbols(conn, ["RELIANCE"], list_only=True)
+        assert orphans == ["RATNAVEER"]
+        assert not any("DELETE" in call.args[0] for call in cur.execute.call_args_list)
+
+    def test_default_still_deletes(self):
+        conn, cur = TestPruneOrphanedSymbols()._mock_conn(["RELIANCE", "RATNAVEER"])
+        assert prune_orphaned_symbols(conn, ["RELIANCE"]) == ["RATNAVEER"]
+        assert any("DELETE" in call.args[0] for call in cur.execute.call_args_list)
+
+    def test_runner_and_cli_expose_the_flag(self):
+        import inspect
+        from pathlib import Path
+        import signals.indicators as ind
+        assert inspect.signature(ind.run_indicators_pipeline).parameters["list_orphans_only"].default is False
+        src = Path(ind.__file__).read_text(encoding="utf-8")
+        assert '"--list-orphans-only"' in src and "list_only=list_orphans_only" in src

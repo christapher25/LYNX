@@ -22,7 +22,7 @@ def validated_sessions(sessions: Sequence[date]) -> pd.DatetimeIndex:
     return index
 
 
-def prune_orphaned_symbol_files(directory: Path, symbols: Collection[str]) -> list[str]:
+def prune_orphaned_symbol_files(directory: Path, symbols: Collection[str], list_only: bool = False) -> list[str]:
     """
     Delete a per-symbol feature Parquet for any symbol no longer in the current universe. A symbol can
     legitimately fall out of every year's top-700 turnover ranking when Stage 5 is rebuilt with corrected
@@ -32,10 +32,15 @@ def prune_orphaned_symbol_files(directory: Path, symbols: Collection[str]) -> li
     stale file lingers with nothing marking it stale, and the checkpoint's "one file per universe symbol,
     no extras" check correctly flags it forever. Mirrors signals.indicators.prune_orphaned_symbols, same
     root cause, a different storage layer (a directory of Parquet files here, Postgres there).
+
+    list_only=True (the pipelines' --list-orphans-only): log and return the orphans, delete nothing.
     """
     directory = Path(directory)
     present = {p.stem for p in directory.glob("*.parquet")}
     orphaned = sorted(present - set(symbols))
+    if orphaned and list_only:
+        logger.warning(f"{directory}: {len(orphaned)} orphan symbol file(s) not in the universe (--list-orphans-only, NOT deleted): {orphaned[:10]}")
+        return orphaned
     for symbol in orphaned:
         (directory / f"{symbol}.parquet").unlink()
     if orphaned:

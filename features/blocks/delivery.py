@@ -286,14 +286,14 @@ def _save_checkpoint(completed: set[str]) -> None:
     }))
 
 
-def run_delivery_pipeline(resume: bool = True) -> dict:
+def run_delivery_pipeline(resume: bool = True, list_orphans_only: bool = False) -> dict:
     """
     Compute and write delivery features for every symbol in the historical universe, one Parquet
     per symbol, checkpointing after each. Rerun with resume=False whenever raw delivery files change
     (a resumed run reuses symbols already written from the older inputs).
     """
     symbols = list_universe_symbols()
-    prune_orphaned_symbol_files(DELIVERY_FEATURES_DIR, symbols)
+    prune_orphaned_symbol_files(DELIVERY_FEATURES_DIR, symbols, list_only=list_orphans_only)
     delivery = load_delivery()
     by_symbol = {s: g for s, g in delivery.groupby("symbol", sort=False)}
     completed = _load_checkpoint() if resume else set()
@@ -343,4 +343,6 @@ def run_delivery_pipeline(resume: bool = True) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LYNX Stage 10 — delivery feature block")
     parser.add_argument("--no-resume", action="store_true", help="ignore checkpoint, recompute all")
-    run_delivery_pipeline(resume=not parser.parse_args().no_resume)
+    parser.add_argument("--list-orphans-only", action="store_true", help="orphans are listed, not deleted; normal processing continues")
+    args = parser.parse_args()
+    run_delivery_pipeline(resume=not args.no_resume, list_orphans_only=args.list_orphans_only)

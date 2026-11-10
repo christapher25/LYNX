@@ -147,7 +147,8 @@ def _save_checkpoint(completed: set[str]) -> None:
                                                        "updated_at": datetime.now(timezone.utc).isoformat()}))
 
 
-def run_circuits_pipeline(resume: bool = True, inferred_by_symbol: dict[str, pd.DataFrame] | None = None) -> dict:
+def run_circuits_pipeline(resume: bool = True, inferred_by_symbol: dict[str, pd.DataFrame] | None = None,
+                          list_orphans_only: bool = False) -> dict:
     """One Parquet per symbol, row-aligned to its Stage 4 rows, checkpointed after each symbol. Rerun with resume=False whenever the
     band or hit files change."""
     from data.ingest_common import write_parquet_atomic
@@ -155,7 +156,7 @@ def run_circuits_pipeline(resume: bool = True, inferred_by_symbol: dict[str, pd.
 
     sessions = trading_sessions()
     symbols = list_universe_symbols()
-    prune_orphaned_symbol_files(CIRCUIT_FEATURES_DIR, symbols)
+    prune_orphaned_symbol_files(CIRCUIT_FEATURES_DIR, symbols, list_only=list_orphans_only)
     all_bands = load_band_files()
     all_hits, hit_days = load_hit_files()
     bands_by, hits_by = ({s: g for s, g in all_bands.groupby("SYMBOL", sort=False)}, {s: g for s, g in all_hits.groupby("SYMBOL", sort=False)})
@@ -184,4 +185,6 @@ def run_circuits_pipeline(resume: bool = True, inferred_by_symbol: dict[str, pd.
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LYNX Stage 10 — circuits feature block")
     parser.add_argument("--no-resume", action="store_true", help="ignore checkpoint, recompute all")
-    run_circuits_pipeline(resume=not parser.parse_args().no_resume)
+    parser.add_argument("--list-orphans-only", action="store_true", help="orphans are listed, not deleted; normal processing continues")
+    args = parser.parse_args()
+    run_circuits_pipeline(resume=not args.no_resume, list_orphans_only=args.list_orphans_only)

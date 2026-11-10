@@ -405,6 +405,78 @@
       "log_dir": "logs/jobs",
       "parallel_ok": true
     },
+    "refresh_bhavcopy": {
+      "description": "Row 20 catch-up (owner 2026-11-10): equity bhavcopy to the latest day via the existing ingester (weekday + weekends pass). Skips dates already on disk; deletes nothing; writes data/raw only. RAM gate 2 GB.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "bhavcopy", "--start", "2026-09-24"],
+      "resume_args": ["--only", "bhavcopy", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_bhavdata": {
+      "description": "Row 20 catch-up: sec_bhavdata_full (delivery) to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "bhavdata", "--start", "2026-09-24"],
+      "resume_args": ["--only", "bhavdata", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_fno_bhavcopy": {
+      "description": "Row 20 catch-up: F&O bhavcopy to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "fno_bhavcopy", "--start", "2026-09-24"],
+      "resume_args": ["--only", "fno_bhavcopy", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_fno_ban": {
+      "description": "Row 20 catch-up: F&O ban lists to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "fno_ban", "--start", "2026-09-24"],
+      "resume_args": ["--only", "fno_ban", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_sec_list": {
+      "description": "Row 20 catch-up: sec_list (circuit bands; needed by the circuits block) to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "sec_list", "--start", "2026-09-24"],
+      "resume_args": ["--only", "sec_list", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_price_band_hits": {
+      "description": "Row 20 catch-up: price-band hit lists to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "price_band_hits", "--start", "2026-09-24"],
+      "resume_args": ["--only", "price_band_hits", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_indices": {
+      "description": "Row 20 catch-up: index files (incl. India VIX) to the latest day. Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "indices", "--start", "2026-09-24"],
+      "resume_args": ["--only", "indices", "--start", "2026-09-24"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_fii_dii": {
+      "description": "Row 20 catch-up: FII/DII forward capture (latest day only; past days cannot be backfilled and stay NaN + flagged).",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "fii_dii"],
+      "resume_args": ["--only", "fii_dii"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_announcements": {
+      "description": "Row 20 catch-up: corporate announcements to the latest day (existing ingester; ISIN-bridge re-resolve is a separate existing job and is not run here). Same rules as refresh_bhavcopy.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--only", "announcements", "--start", "2026-10-25"],
+      "resume_args": ["--only", "announcements", "--start", "2026-10-25"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
     "invariants": {
       "description": "Full invariant suite (tests/invariants)",
       "module": "pytest",

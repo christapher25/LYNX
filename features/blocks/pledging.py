@@ -166,7 +166,7 @@ def _save_checkpoint(completed: set[str]) -> None:
                                                         "updated_at": datetime.now(timezone.utc).isoformat()}))
 
 
-def run_pledging_pipeline(resume: bool = True) -> dict:
+def run_pledging_pipeline(resume: bool = True, list_orphans_only: bool = False) -> dict:
     """One Parquet per symbol, row-aligned to its Stage 4 rows, checkpointed after each symbol. Rerun with resume=False whenever
     the SHP filings change (a resumed run keeps symbols written from older inputs)."""
     from data.ingest_common import write_parquet_atomic
@@ -174,7 +174,7 @@ def run_pledging_pipeline(resume: bool = True) -> dict:
 
     sessions = trading_sessions()
     symbols = list_universe_symbols()
-    prune_orphaned_symbol_files(PLEDGING_FEATURES_DIR, symbols)
+    prune_orphaned_symbol_files(PLEDGING_FEATURES_DIR, symbols, list_only=list_orphans_only)
     completed = _load_checkpoint() if resume else set()
     remaining = [s for s in symbols if s not in completed]
     logger.info(f"pledging pipeline: {len(symbols):,} symbols, {len(completed):,} done, {len(remaining):,} remaining")
@@ -196,4 +196,6 @@ def run_pledging_pipeline(resume: bool = True) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LYNX Stage 10 — pledging feature block")
     parser.add_argument("--no-resume", action="store_true", help="ignore checkpoint, recompute all")
-    run_pledging_pipeline(resume=not parser.parse_args().no_resume)
+    parser.add_argument("--list-orphans-only", action="store_true", help="orphans are listed, not deleted; normal processing continues")
+    args = parser.parse_args()
+    run_pledging_pipeline(resume=not args.no_resume, list_orphans_only=args.list_orphans_only)
