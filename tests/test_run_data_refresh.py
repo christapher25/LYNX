@@ -583,3 +583,56 @@ def test_excuse_applies_to_the_last_record_only(fake, sandbox):
     write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01")),
                                          ("2026-10-02", "failed", "timeout")])
     assert run_bhavdata(sandbox)[0] != 0
+
+
+# ---- Round 1: pending uses the FIRST date of the key; an impossible calendar date fails cleanly ------------------------
+@pytest.mark.parametrize("key", ["2026-11-09_2026-11-10",    # starts yesterday, ends today
+                                 "2026-11-08_2026-11-10",
+                                 "2026-11-09_2026-11-12"])   # starts in the past, ends after today
+def test_round1_failed_range_key_starting_before_today_still_fails(fake, sandbox, key):
+    write_manifest(sandbox, "announcements", [(key, "failed", "timeout")])
+    assert rdr.main(["--only", "announcements"]) != 0
+
+
+def test_round1_failed_range_key_starting_after_today_is_not_checked(fake, sandbox):
+    write_manifest(sandbox, "announcements", [("2026-11-11_2026-11-12", "failed", "x")])   # outside [start, today]
+    assert rdr.main(["--only", "announcements"]) == 0
+
+
+@pytest.mark.parametrize("key", ["2026-11-10_2026-11-10", "2026-11-10_2026-11-12"])
+def test_round1_failed_range_key_starting_today_is_pending(fake, sandbox, key):
+    write_manifest(sandbox, "announcements", [(key, "failed", "404 not yet")])
+    msgs, sink = capture("INFO")
+    try:
+        rc = rdr.main(["--only", "announcements"])
+    finally:
+        logger.remove(sink)
+    assert rc == 0
+    assert sum("not yet published, not checked" in m and key in m for m in msgs) == 1
+
+
+def test_round1_invalid_calendar_date_in_a_failed_key_fails_cleanly(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-13-45", "failed", "garbled key")])
+    msgs, sink = capture("WARNING")
+    try:
+        rc = rdr.main(["--only", "bhavcopy"])
+    finally:
+        logger.remove(sink)
+    assert rc != 0
+    assert any("2026-13-45" in m for m in msgs)
+
+
+def test_round1_invalid_calendar_range_key_fails_cleanly(fake, sandbox):
+    write_manifest(sandbox, "announcements", [("2026-11-01_2026-02-30", "failed", "garbled key")])
+    assert rdr.main(["--only", "announcements"]) != 0
+
+
+def test_round1_equity_manifest_is_read_once_per_step(fake, sandbox, monkeypatch):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday"), ("2026-10-03", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01")),
+                                         ("2026-10-03", "failed", stale("2026-10-03", "2026-10-02"))])
+    reads = []
+    real = rdr.last_records
+    monkeypatch.setattr(rdr, "last_records", lambda p: (reads.append(Path(p).name), real(p))[1])
+    assert run_bhavdata(sandbox)[0] == 0
+    assert reads.count("bhavcopy.jsonl") == 1
