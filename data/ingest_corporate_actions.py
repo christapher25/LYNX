@@ -182,7 +182,7 @@ def ingest_symbol(
                 raise RuntimeError(f"{symbol} {year}: fetch failed: {e}") from e
             # One bad year for one symbol shouldn't abort the whole symbol —
             # log it and continue to the next year.
-            print(f"  {symbol} {year}: FETCH FAILED — {e}")
+            log.warning("{} {}: FETCH FAILED — {}", symbol, year, e)
             time.sleep(REQUEST_DELAY)
             continue
 
@@ -397,6 +397,8 @@ def refresh_symbol(symbol: str, refresh_from: date, end_year: int) -> dict:
                         symbol, sem, existing_by_sem[sem], r.raw_subject)
         else:
             keep.append(r.Index)
+            if sem[2] is not None:   # a kept factor-bearing row also shadows a later reworded copy inside the same fetch
+                existing_by_sem[sem] = r.raw_subject
     added = in_range.loc[keep]
     if added.empty:
         return {"symbol": symbol, "status": "ok", "added": [], "skipped": skipped}

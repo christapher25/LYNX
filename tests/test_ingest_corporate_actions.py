@@ -511,3 +511,31 @@ def test_cli_help_mentions_symbols():
     out = subprocess.run([sys.executable, "-m", "data.ingest_corporate_actions", "--help"], capture_output=True, text=True,
                          timeout=120, cwd=str(Path(ing.__file__).resolve().parent.parent))
     assert out.returncode == 0 and "--symbols" in out.stdout
+
+
+# ---- review round 3 (Round 1 fixes): reworded duplicates inside ONE fetch ----------------------------------
+def test_two_reworded_bonus_rows_new_in_one_fetch_append_only_one_and_warn(env):
+    seed(env, "AAA", {2026: OLD_2026})
+    env.fake.records = {("AAA", 2026): OLD_2026 + [rec("Bonus 1:1", "05-Oct-2026"), rec("Bonus Issue 1:1", "05-Oct-2026")]}
+    msgs, sink, logger = _capture()
+    try:
+        summary = ing.run_refresh(date(2026, 9, 1))
+    finally:
+        logger.remove(sink)
+    assert summary["gained"]["AAA"] == [("2026-10-05", "bonus")]
+    stored = pd.read_parquet(env.out / "AAA.parquet")
+    assert int((stored["action_type"] == "bonus").sum()) == 1
+    assert sum("possible reworded duplicate NOT added" in m for m in msgs) == 1
+
+
+def test_fetch_failed_in_default_ingest_is_a_log_warning_not_a_print(env, capsys):
+    env.fake.records = {("AAA", 2026): RuntimeError("x")}
+    import requests
+    env.fake.records = {("AAA", 2026): requests.RequestException("boom")}
+    msgs, sink, logger = _capture()
+    try:
+        ing.ingest_symbol(object(), "AAA", 2026, 2026)
+    finally:
+        logger.remove(sink)
+    assert any("FETCH FAILED" in m and "boom" in m for m in msgs)
+    assert "FETCH FAILED" not in capsys.readouterr().out
