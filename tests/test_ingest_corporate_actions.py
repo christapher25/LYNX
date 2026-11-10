@@ -539,3 +539,153 @@ def test_fetch_failed_in_default_ingest_is_a_log_warning_not_a_print(env, capsys
         logger.remove(sink)
     assert any("FETCH FAILED" in m and "boom" in m for m in msgs)
     assert "FETCH FAILED" not in capsys.readouterr().out
+
+
+# ---- R20-2 (b): the refresh keeps each file's stored Arrow schema --------------------------------------------
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+
+def _schema(path):
+    return pq.read_schema(path)
+
+
+def _retype(path, **types):
+    """Rewrite a stored file with some columns cast to the given Arrow types (an old file written by another pandas)."""
+    table = pq.read_table(path)
+    for name, typ in types.items():
+        i = table.schema.get_field_index(name)
+        table = table.set_column(i, name, table.column(name).cast(typ))
+    pq.write_table(table, path, compression="snappy")
+
+
+def test_b_T9_typed_columns_keep_their_exact_stored_type(env):
+    seed(env, "AAA", {2026: [rec("Bonus 1:1", "05-Oct-2026")]})
+    path = env.out / "AAA.parquet"
+    _retype(path, isin=pa.string())            # stored as plain string; pandas inference would say large_string
+    before = _schema(path)
+    assert before.field("adjustment_factor").type == pa.float64() and before.field("isin").type == pa.string()
+    env.fake.records = {("AAA", 2026): [rec("Bonus 1:1", "05-Oct-2026"), rec("Interim Dividend - Rs 3 Per Share", "20-Oct-2026")]}
+    ing.run_refresh(date(2026, 9, 1))
+    after = _schema(path)
+    assert len(pd.read_parquet(path)) == 2
+    assert after.field("isin").type == pa.string()                              # exact stored type kept
+    assert after.field("adjustment_factor").type == pa.float64()                # added row is all-None there
+    assert after.names == before.names
+
+
+def test_b_T10_null_typed_column_stays_null_when_added_rows_are_null_there(env):
+    seed(env, "AAA", {2026: [rec("Bonus 1:1", "05-Oct-2026")]})
+    path = env.out / "AAA.parquet"
+    assert _schema(path).field("bc_start_date").type == pa.null()
+    env.fake.records = {("AAA", 2026): [rec("Bonus 1:1", "05-Oct-2026"), rec("Bonus 2:1", "20-Oct-2026")]}
+    ing.run_refresh(date(2026, 9, 1))
+    assert len(pd.read_parquet(path)) == 2 and _schema(path).field("bc_start_date").type == pa.null()
+
+
+def test_b_T11_null_typed_column_takes_the_type_of_an_added_value_history_stays_null(env):
+    seed(env, "AAA", {2026: [rec("Bonus 1:1", "05-Oct-2026")]})
+    path = env.out / "AAA.parquet"
+    assert _schema(path).field("dividend_amount").type == pa.null()
+    env.fake.records = {("AAA", 2026): [rec("Bonus 1:1", "05-Oct-2026"), rec("Interim Dividend - Rs 3 Per Share", "20-Oct-2026")]}
+    ing.run_refresh(date(2026, 9, 1))
+    df = pd.read_parquet(path)
+    assert _schema(path).field("dividend_amount").type == pa.float64()
+    assert df["dividend_amount"].isna().tolist() == [True, False] and df["dividend_amount"].iloc[1] == 3.0
+
+
+def test_b_T12_uncastable_added_value_fails_the_symbol_and_leaves_the_file_untouched(env):
+    seed(env, "AAA", {2026: [rec("Bonus 1:1", "05-Oct-2026")]})
+    path = env.out / "AAA.parquet"
+    _retype(path, dividend_amount=pa.int32())      # stored typed; a fractional dividend cannot be cast without loss
+    before = path.read_bytes()
+    env.fake.records = {("AAA", 2026): [rec("Bonus 1:1", "05-Oct-2026"), rec("Interim Dividend - Rs 3.5 Per Share", "20-Oct-2026")]}
+    summary = ing.run_refresh(date(2026, 9, 1))
+    assert summary["failed"] == ["AAA"] and summary["gained"] == {}
+    assert path.read_bytes() == before and not list(env.out.glob("*.tmp"))
+
+
+# ---- R20-2 (d): one process-wide NSE request rate -------------------------------------------------------------
+import threading
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, d):
+        self.sleeps.append(d)
+        self.t += d
+
+
+class _Resp:
+    status_code = 200
+
+    def json(self):
+        return []
+
+
+class _Session:
+    def get(self, *a, **k):
+        return _Resp()
+
+
+def test_d_T13_four_threads_never_start_two_requests_closer_than_request_delay(monkeypatch):
+    clock, starts = FakeClock(), []
+    monkeypatch.setattr(ing, "REQUEST_DELAY", 0.6)
+    monkeypatch.setattr(ing, "_LIMITER", ing.RateLimiter(clock=clock, sleep=clock.sleep, on_start=lambda t: starts.append(t)))
+    session = _Session()
+    threads = [threading.Thread(target=lambda: [ing.fetch_symbol_year(session, "AAA", 2026) for _ in range(3)]) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    starts.sort()
+    assert len(starts) == 12
+    assert all(b - a >= 0.6 - 1e-9 for a, b in zip(starts, starts[1:]))
+
+
+def test_d_T14_a_single_thread_waits_only_the_remainder(monkeypatch):
+    clock = FakeClock()
+    lim = ing.RateLimiter(clock=clock, sleep=clock.sleep)
+    lim.wait(0.6)                      # first request: no wait
+    assert clock.sleeps == []
+    clock.t += 0.2                     # 0.2 s of other work
+    lim.wait(0.6)
+    assert clock.sleeps == [pytest.approx(0.4)]          # the remainder, not a full extra delay
+    clock.t += 5.0                     # long idle: no wait at all
+    lim.wait(0.6)
+    assert len(clock.sleeps) == 1
+
+
+def test_d_session_creation_goes_through_the_limiter_too(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ing, "_LIMITER", ing.RateLimiter(clock=FakeClock(), sleep=lambda d: None, on_start=calls.append))
+    monkeypatch.setattr(ing.requests.Session, "get", lambda self, *a, **k: _Resp())
+    ing.get_session()
+    assert len(calls) == 1
+
+
+def test_d_ingest_symbol_has_no_per_worker_sleep_any_more(env, monkeypatch):
+    slept = []
+    monkeypatch.setattr(ing.time, "sleep", lambda d: slept.append(d))
+    env.fake.records = {("AAA", 2025): [rec("Bonus 1:1", "05-Mar-2025")], ("AAA", 2026): requests_error()}
+    ing.ingest_symbol(object(), "AAA", 2025, 2026)           # one good year, one failed year: both paths used to sleep
+    assert slept == []
+
+
+def requests_error():
+    import requests
+    return requests.RequestException("boom")
+
+
+def test_d_refresh_time_estimate_is_requests_times_delay_without_dividing_by_workers(env, monkeypatch):
+    for sym in ("AAA", "BBB", "CCC", "DDD"):
+        seed(env, sym, {2026: OLD_2026})
+    monkeypatch.setattr(ing, "REQUEST_DELAY", 60)
+    monkeypatch.setattr(ing, "_LIMITER", ing.RateLimiter(clock=FakeClock(), sleep=lambda d: None))
+    env.fake.records = {(s, 2026): OLD_2026 for s in ("AAA", "BBB", "CCC", "DDD")}
+    _, msgs = _run_capture(env)
+    assert any("est. 4 min" in m for m in msgs)
