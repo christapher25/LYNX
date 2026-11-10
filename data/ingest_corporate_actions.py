@@ -50,6 +50,8 @@ import threading
 MAX_WORKERS = 4   # each with its own session; total request rate stays similar
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -116,8 +118,37 @@ def get_universe_from_bhavcopy() -> dict[str, tuple[int, int]]:
     }
 
 
+class RateLimiter:
+    """Process-wide pacing: the START of any two consecutive requests, across all threads, is at least `interval` seconds apart.
+    The lock is held while waiting, so threads queue; MAX_WORKERS threads then only overlap in network latency.
+    clock/sleep are injectable so tests need no real waiting; on_start(t) (tests) is called under the lock with the start time."""
+
+    def __init__(self, clock=time.monotonic, sleep=time.sleep, on_start=None):
+        self._clock, self._sleep, self._on_start = clock, sleep, on_start
+        self._lock = threading.Lock()
+        self._last: float | None = None
+
+    def wait(self, interval: float) -> None:
+        with self._lock:
+            if self._last is not None:
+                remainder = self._last + interval - self._clock()
+                if remainder > 0:
+                    self._sleep(remainder)
+            self._last = self._clock()
+            if self._on_start is not None:
+                self._on_start(self._last)
+
+
+_LIMITER = RateLimiter()
+
+
+def _rate_limit() -> None:
+    _LIMITER.wait(REQUEST_DELAY)   # REQUEST_DELAY is read at call time
+
+
 def get_session() -> requests.Session:
     session = requests.Session()
+    _rate_limit()
     session.headers.update(BASE_HEADERS)
     try:
         session.get("https://www.nseindia.com", timeout=15)
@@ -131,6 +162,7 @@ def fetch_symbol_year(
 ) -> list[dict]:
     """One symbol, one calendar year. Returns raw NSE records (unparsed)."""
     url = "https://www.nseindia.com/api/corporates-corporateActions"
+    _rate_limit()
     params = {
         "index": "equities",
         "symbol": symbol,
@@ -183,7 +215,6 @@ def ingest_symbol(
             # One bad year for one symbol shouldn't abort the whole symbol —
             # log it and continue to the next year.
             log.warning("{} {}: FETCH FAILED — {}", symbol, year, e)
-            time.sleep(REQUEST_DELAY)
             continue
 
         for raw in raw_records:
@@ -212,8 +243,6 @@ def ingest_symbol(
                 "parse_confidence": parsed.parse_confidence,
                 "adjustment_factor": factor,
             })
-
-        time.sleep(REQUEST_DELAY)
 
     df = pd.DataFrame(all_records)
     if not df.empty:
@@ -257,7 +286,7 @@ def main(start_year: int = 2000, end_year: int | None = None) -> None:
     total_requests = sum(hi - lo + 1 for lo, hi in universe.values())
     logger.info(
         f"Universe: {len(universe):,} symbols | {total_requests:,} year-requests | "
-        f"{MAX_WORKERS} workers | est. {total_requests * REQUEST_DELAY / 60 / MAX_WORKERS:.0f} min"
+        f"{MAX_WORKERS} workers | est. {total_requests * REQUEST_DELAY / 60:.0f} min"
     )
 
     flagged_unparseable = 0
@@ -342,6 +371,31 @@ def _semantic_key(ex_date, action_type, factor):
     return d, action_type, f
 
 
+class _ArrowTableWriter:
+    """Lets write_parquet_atomic (temp file + os.replace) write an Arrow table: it only calls .to_parquet(path, ...)."""
+
+    def __init__(self, table: pa.Table):
+        self.table = table
+
+    def to_parquet(self, path, index=False, compression="snappy"):
+        pq.write_table(self.table, path, compression=compression)
+
+
+def _table_with_stored_schema(merged: pd.DataFrame, stored: pa.Schema, added: pd.DataFrame) -> pa.Table:
+    """The merged frame as an Arrow table whose fields are the stored file's, field by field. One exception: a stored `null` field
+    for which an added row holds a value takes the type of the values. Raises (pyarrow error / ValueError) if an added value cannot
+    be cast to a stored non-null type without loss."""
+    if list(merged.columns) != stored.names:
+        raise ValueError(f"column set/order differs from the stored schema: {list(merged.columns)} vs {stored.names}")
+    fields = []
+    for field in stored:
+        typ = field.type
+        if pa.types.is_null(typ) and added[field.name].notna().any():
+            typ = pa.Array.from_pandas(merged[field.name]).type
+        fields.append(pa.field(field.name, typ))
+    return pa.Table.from_pandas(merged, schema=pa.schema(fields), preserve_index=False, safe=True)
+
+
 def refresh_symbol(symbol: str, refresh_from: date, end_year: int) -> dict:
     """One symbol with an existing file: fetch refresh_from.year..end_year, append unseen rows dated >= refresh_from.
     Never alters or removes an existing row; writes only when there are new rows; any fetch or write failure leaves the file
@@ -406,7 +460,8 @@ def refresh_symbol(symbol: str, refresh_from: date, end_year: int) -> dict:
     try:
         merged = pd.concat([existing, added[list(existing.columns)]], ignore_index=True)
         merged = merged.sort_values("ex_date", kind="stable").reset_index(drop=True)
-        write_parquet_atomic(merged, path)
+        # keep each column's stored Arrow type (concat/inference would drift it)
+        write_parquet_atomic(_ArrowTableWriter(_table_with_stored_schema(merged, pq.read_schema(path), added)), path)
     except Exception as e:                                       # noqa: BLE001
         return {"symbol": symbol, "status": "failed", "error": f"write failed: {e}"[:300]}
     return {"symbol": symbol, "status": "ok", "skipped": skipped,
@@ -424,7 +479,7 @@ def run_refresh(refresh_from: date, workers: int = MAX_WORKERS, symbols: list[st
     requests_planned = len(symbols) * (today.year - refresh_from.year + 1)
     log.info("refresh: {:,} symbols with a file, {} year chunk(s) each = {:,} requests, {} workers, est. {:.0f} min (delay only)",
              len(symbols), today.year - refresh_from.year + 1, requests_planned, workers,
-             requests_planned * REQUEST_DELAY / 60 / max(workers, 1))
+             requests_planned * REQUEST_DELAY / 60)
     manifest = Manifest(MANIFEST_PATH)
     lock = threading.Lock()
     gained: dict[str, list] = {}
