@@ -110,13 +110,27 @@ def _date_column(frame: pd.DataFrame) -> str | None:
     return next((c for c in DATE_COLUMNS if c in frame.columns), None)
 
 
-def _digest_frame(frame: pd.DataFrame, sort_col: str, columns: list[str] | None = None) -> dict:
+def _digest_frame(frame: pd.DataFrame, sort_col: str, columns: list[str] | None = None, track_all_null: bool = False) -> dict:
     frame = frame.sort_values(sort_col, kind="stable").reset_index(drop=True)
     cols = list(frame.columns) if columns is None else columns
-    return {
+    unit = {
         "rows": int(len(frame)),
         "columns": {c: _digest_series(frame[c]) for c in cols},
         "keys": _digest_series(frame[sort_col]),
+    }
+    if track_all_null:  # not part of any digest: only names the columns that held no value in the history rows
+        unit["all_null"] = sorted(c for c in cols if not frame[c].notna().any())
+    return unit
+
+
+def _all_null_digests(rows: int) -> set[str]:
+    """Digests of an all-null column of `rows` rows in every representation a Parquet round trip can produce."""
+    return {
+        _digest_series(pd.Series([None] * rows, dtype=object)),
+        _digest_series(pd.Series([float("nan")] * rows, dtype=object)),
+        _digest_series(pd.Series([float("nan")] * rows, dtype="float64")),
+        _digest_series(pd.Series([pd.NaT] * rows, dtype="datetime64[ns]")),
+        _digest_series(pd.Series([pd.NaT] * rows, dtype="datetime64[us]")),
     }
 
 
@@ -129,17 +143,17 @@ def _history(frame: pd.DataFrame, cutoff: pd.Timestamp) -> tuple[pd.DataFrame, s
     return frame[(d <= cutoff) | d.isna()], col
 
 
-def _file_unit(path: Path, cutoff: pd.Timestamp) -> dict | None:
+def _file_unit(path: Path, cutoff: pd.Timestamp, track_all_null: bool = False) -> dict | None:
     frame, col = _history(pd.read_parquet(path), cutoff)
     if col is None:
         raise ValueError(f"{path}: no date column among {DATE_COLUMNS}; cannot apply a cutoff")
-    return _digest_frame(frame, col) if len(frame) else None
+    return _digest_frame(frame, col, track_all_null=track_all_null) if len(frame) else None
 
 
-def _dir_units(directory: Path, cutoff: pd.Timestamp) -> dict[str, dict]:
+def _dir_units(directory: Path, cutoff: pd.Timestamp, track_all_null: bool = False) -> dict[str, dict]:
     units = {}
     for path in sorted(directory.glob("*.parquet")):
-        unit = _file_unit(path, cutoff)
+        unit = _file_unit(path, cutoff, track_all_null)
         if unit is not None:
             units[path.stem] = unit
     return units
@@ -191,7 +205,7 @@ def dataset_names(src: Sources, include_indicators: bool = True) -> list[str]:
 def compute_units(name: str, src: Sources, cutoff_text: str, status_symbols: dict[str, list[str]] | None = None) -> dict[str, dict]:
     cutoff = pd.Timestamp(cutoff_text)
     if name == "corporate_actions":
-        return _dir_units(src.actions_dir, cutoff)
+        return _dir_units(src.actions_dir, cutoff, track_all_null=True)
     if name == "adjusted":
         return _dir_units(src.adjusted_dir, cutoff)
     if name == "universe":
@@ -235,6 +249,11 @@ def snapshot(cutoff: str, src: Sources, force: bool = False) -> list[str]:
 class Report:
     failures: list[str] = field(default_factory=list)
     allowed: list[str] = field(default_factory=list)
+    kinds: dict[str, int] = field(default_factory=lambda: {"new-action adjusted": 0, "empty-column type": 0, "owner-approved": 0})
+
+    def allow(self, kind: str, line: str) -> None:
+        self.allowed.append(line)
+        self.kinds[kind] += 1
 
 
 def new_action_symbols(actions_dir: Path, cutoff: pd.Timestamp) -> set[str]:
@@ -263,6 +282,14 @@ def _compare_units(name: str, key: str, old: dict | None, new: dict | None, allo
                 report.failures[i] += f" {NEW_ACTION_LABEL}"
 
 
+def _empty_column_type_changes(old: dict, new: dict, changed: list[str]) -> list[str]:
+    """corporate_actions only. A changed column is excusable iff the snapshot digest is that of an all-null column of the snapshot's
+    row count (in any of the representations) AND the column holds no value in the history rows now (new unit's all_null)."""
+    shapes = _all_null_digests(old["rows"])
+    now_empty = set(new.get("all_null", []))
+    return [c for c in changed if old["columns"][c] in shapes and c in now_empty]
+
+
 def _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, report) -> None:
     if old is None:
         report.failures.append(f"{where}: unit has rows <= cutoff now but did not at snapshot ({new['rows']} rows added)")
@@ -280,13 +307,18 @@ def _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, repo
         report.failures.append(f"{where}: column set changed {sorted(set(old['columns']) ^ set(new['columns']))}")
         return
     changed = sorted(c for c in old["columns"] if old["columns"][c] != new["columns"][c])
+    if name == "corporate_actions" and changed:
+        empty = _empty_column_type_changes(old, new, changed)
+        if empty:
+            report.allow("empty-column type", f"{where}: empty column changed stored type {empty}")
+            changed = [c for c in changed if c not in empty]
     if "status" in old or "status" in new:
         if old.get("status") != new.get("status"):
             changed.append("<delisted-status columns>")
     if not changed:
         return
     if name == "adjusted" and key in allowed_adj and all(c in adj_cols for c in changed):
-        report.allowed.append(f"{where}: adjusted column(s) {changed} changed; symbol has a new corporate action after the cutoff")
+        report.allow("new-action adjusted", f"{where}: adjusted column(s) {changed} changed; symbol has a new corporate action after the cutoff")
     else:
         report.failures.append(f"{where}: column(s) changed {changed}")
 
@@ -364,10 +396,12 @@ def main(argv=None, sources: Sources | None = None) -> int:
         logger.warning("ALLOWED {}", line)
     for line in report.failures:
         logger.error("FAIL {}", line)
+    logger.info("ALLOWED counts: new-action adjusted={} empty-column type={} owner-approved={}",
+                report.kinds["new-action adjusted"], report.kinds["empty-column type"], report.kinds["owner-approved"])
     if report.failures:
         logger.error("history guard FAILED: {} difference(s), {} allowed", len(report.failures), len(report.allowed))
         return 1
-    logger.success("history guard passed: history unchanged ({} allowed adjusted-price difference(s))", len(report.allowed))
+    logger.success("history guard passed: history unchanged ({} allowed)", len(report.allowed))
     return 0
 
 

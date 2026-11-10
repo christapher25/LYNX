@@ -402,3 +402,121 @@ def test_label_does_not_apply_without_a_factor(world):
     world.set_value(world.features / "delivery" / "AAA.parquet", 0, "delivery_pct", 99.0)
     r = world.verify()
     assert r.failures and "new corporate action" not in failing_text(r)
+
+
+# ------------------------------------------------------------------ R20-2 (a): empty-column dtype change, corporate_actions only
+def _ca_frame(symbol, rows, ratio=None, rec=None):
+    """rows: list of ex_date strings. ratio / rec: per-row values or None (all-None object column, like the real files)."""
+    n = len(rows)
+    ratio = [None] * n if ratio is None else ratio
+    rec = [None] * n if rec is None else rec
+    return pd.DataFrame({"symbol": [symbol] * n, "ex_date": pd.to_datetime(rows), "action_type": ["dividend"] * n,
+                         "raw_subject": ["x"] * n, "adjustment_factor": pd.array([None] * n, dtype=object),
+                         "ratio": pd.Series(ratio, dtype=object), "record_date": pd.Series(rec, dtype=object)})
+
+
+def _ca_world(tmp_path, extra_all_none=True):
+    w = World(tmp_path)
+    for sym in ("AAA", "BBB"):
+        _ca_frame(sym, ["2020-01-01", "2026-09-20"]).to_parquet(w.actions / f"{sym}.parquet")
+    return w
+
+
+def _append_valued_row(path, ex_date="2026-10-05"):
+    df = pd.read_parquet(path)
+    row = _ca_frame("AAA", [ex_date], ratio=[2.0], rec=[pd.Timestamp("2026-10-04")])
+    pd.concat([df.astype(object), row.astype(object)], ignore_index=True).to_parquet(path)
+
+
+def test_a_fixture_really_changes_stored_type(tmp_path):
+    w = _ca_world(tmp_path)
+    path = w.actions / "AAA.parquet"
+    assert pd.read_parquet(path)["ratio"].dtype == object
+    _append_valued_row(path)
+    df = pd.read_parquet(path)
+    assert df["ratio"].dtype == np.float64 and str(df["record_date"].dtype).startswith("datetime64")
+
+
+def test_a_T1_empty_column_changing_type_is_allowed(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _append_valued_row(w.actions / "AAA.parquet")
+    r = w.verify()
+    assert r.failures == [], failing_text(r)
+    text = " | ".join(r.allowed)
+    assert "empty column changed stored type" in text and "ratio" in text and "record_date" in text
+
+
+def test_a_T1_old_format_snapshot_without_all_null_still_verifies(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    p = w.out / "corporate_actions.json"
+    snap = json.loads(p.read_text())
+    for u in snap["units"].values():
+        u.pop("all_null", None)
+    p.write_text(json.dumps(snap))
+    assert w.verify().failures == []
+    _append_valued_row(w.actions / "AAA.parquet")
+    assert w.verify().failures == []
+
+
+def test_a_new_snapshot_records_all_null_for_corporate_actions_only(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    ca = json.loads((w.out / "corporate_actions.json").read_text())
+    assert ca["units"]["AAA"]["all_null"] == ["adjustment_factor", "ratio", "record_date"]
+    for name in ("adjusted", "features_delivery", "universe", "indicators"):
+        for u in json.loads((w.out / f"{name}.json").read_text())["units"].values():
+            assert "all_null" not in u
+
+
+def _retype_all_none_column(path, col):
+    df = pd.read_parquet(path)
+    df[col] = np.nan  # all-NaN float64: same shape of change, no value
+    df.to_parquet(path)
+
+
+def test_a_T2_same_input_in_adjusted_and_features_still_fails(tmp_path):
+    w = World(tmp_path)
+    for p in (w.adjusted / "AAA.parquet", w.features / "delivery" / "AAA.parquet"):
+        df = pd.read_parquet(p)
+        df["xtra"] = pd.Series([None] * len(df), dtype=object)
+        df.to_parquet(p)
+    w.snapshot()
+    for p in (w.adjusted / "AAA.parquet", w.features / "delivery" / "AAA.parquet"):
+        _retype_all_none_column(p, "xtra")
+    text = failing_text(w.verify())
+    assert "adjusted:AAA" in text and "features_delivery:AAA" in text
+
+
+def test_a_T3_column_with_a_value_at_snapshot_that_is_now_null_fails(tmp_path):
+    w = _ca_world(tmp_path)
+    _ca_frame("AAA", ["2020-01-01", "2026-09-20"], ratio=[1.0, None]).to_parquet(w.actions / "AAA.parquet")
+    w.snapshot()
+    _ca_frame("AAA", ["2020-01-01", "2026-09-20"]).to_parquet(w.actions / "AAA.parquet")
+    r = w.verify()
+    assert "corporate_actions:AAA" in failing_text(r) and "ratio" in failing_text(r)
+
+
+def test_a_T3_empty_column_that_now_holds_a_history_value_fails(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _ca_frame("AAA", ["2020-01-01", "2026-09-20"], ratio=[None, 3.0]).to_parquet(w.actions / "AAA.parquet")
+    r = w.verify()
+    assert "corporate_actions:AAA" in failing_text(r) and "ratio" in failing_text(r)
+
+
+def test_a_T4_type_change_plus_removed_history_row_fails(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _ca_frame("AAA", ["2020-01-01", "2026-10-05"], ratio=[None, 2.0]).to_parquet(w.actions / "AAA.parquet")  # history row dropped
+    assert "row count" in failing_text(w.verify())
+
+
+def test_a_T4_type_change_plus_changed_ex_date_fails(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    df = pd.concat([_ca_frame("AAA", ["2020-01-01", "2026-09-21"]).astype(object),
+                    _ca_frame("AAA", ["2026-10-05"], ratio=[2.0]).astype(object)], ignore_index=True)
+    df.to_parquet(w.actions / "AAA.parquet")
+    assert "date column differs" in failing_text(w.verify())
