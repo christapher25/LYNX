@@ -108,32 +108,88 @@ def newest_on_disk(directory: Path) -> date | None:
     return best
 
 
-def failed_dates(manifest_path: Path, start: date, end: date) -> list[str]:
-    """Keys whose LAST manifest record is `failed` and that fall in [start, end]. A range key `a_b` counts if it overlaps."""
+def last_records(manifest_path: Path) -> dict[str, tuple[str, str]]:
+    """key -> (status, error) of the LAST record per key. Undecodable lines are skipped with a WARNING."""
     path = Path(manifest_path)
+    last: dict[str, tuple[str, str]] = {}
     if not path.exists():
-        return []
-    last: dict[str, str] = {}
+        return last
     for number, raw in enumerate(path.read_bytes().splitlines(), 1):
         line = raw.decode("utf-8", errors="replace")
         if not line.strip():
             continue
         try:
             rec = json.loads(line)
-            last[rec["trade_date"]] = rec["status"]
-        except (ValueError, KeyError, TypeError):
+            last[rec["trade_date"]] = (rec["status"], str(rec.get("error") or ""))
+        except (ValueError, KeyError, TypeError, AttributeError):
             logger.warning("manifest {}: skipping undecodable line {} ({}...)", path.name, number, line[:60])
-    out = []
-    for key, status in sorted(last.items()):
+    return last
+
+
+def failed_records(manifest_path: Path, start: date, end: date) -> dict[str, str]:
+    """key -> error for keys whose LAST manifest record is `failed` and that fall in [start, end]. A range key `a_b` counts if it
+    overlaps."""
+    out = {}
+    for key, (status, error) in sorted(last_records(manifest_path).items()):
         if status != "failed":
             continue
         found = _DATE_RE.findall(key)
         if not found:
             continue
-        a, b = date.fromisoformat(found[0]), date.fromisoformat(found[-1])
+        try:
+            a, b = date.fromisoformat(found[0]), date.fromisoformat(found[-1])
+        except ValueError:
+            # matches the date pattern but is not a calendar date: cannot be placed in the window, so never ignore it
+            logger.warning("manifest {}: failed key {!r} is not a valid calendar date; counted as FAILED", Path(manifest_path).name, key)
+            out[key] = error
+            continue
         if a <= end and b >= start:
-            out.append(key)
+            out[key] = error
     return out
+
+
+def failed_dates(manifest_path: Path, start: date, end: date) -> list[str]:
+    return list(failed_records(manifest_path, start, end))
+
+
+_STALE_RE = re.compile(r"file dated (\d{4}-\d{2}-\d{2}), requested (\d{4}-\d{2}-\d{2})")
+
+
+def is_expected_stale_reserve(step_name: str, key: str, error: str,
+                              equity_last: dict[str, tuple[str, str]] | None = None) -> bool:
+    """True iff this `failed` record is NSE re-serving an EARLIER day's file on a non-session, confirmed by the equity bhavcopy.
+    All of: (a) the error is `file dated A, requested B` with B == key and A < B; (b) no equity bhavcopy file exists for the
+    date; (c) the equity bhavcopy manifest's last record for the date is `holiday` (weekdays and weekends alike: the equity
+    weekend pass records `holiday` for non-sessions). A step never excuses itself: the bhavcopy step's own failures always
+    fail. The ingester's header-date check is what rejected the file and is never loosened; this only recognises its known,
+    benign outcome. Anything else stays a failure. `equity_last` is the equity manifest's last_records(), read once per step by
+    the caller (read here when omitted)."""
+    if step_name == "bhavcopy":
+        return False
+    m = _STALE_RE.search(error or "")
+    if not m or m.group(2) != key:
+        return False
+    try:
+        file_date, requested = date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))
+    except ValueError:
+        return False
+    if not file_date < requested:
+        return False
+    if (Path(DATA_DIRS["bhavcopy"]) / f"{key}.parquet").exists():
+        return False
+    if equity_last is None:
+        equity_last = last_records(MANIFEST_DIR / "bhavcopy.jsonl")
+    equity = equity_last.get(key)
+    return bool(equity) and equity[0] == "holiday"
+
+
+def _first_date(key: str) -> date | None:
+    """First date of a manifest key (the only date of a single-date key); None if absent or not a calendar date."""
+    found = _DATE_RE.findall(key)
+    try:
+        return date.fromisoformat(found[0]) if found else None
+    except ValueError:
+        return None
 
 
 def _currency(step: Step) -> None:
@@ -223,7 +279,19 @@ def _run(args) -> int:
                 logger.error("step {} FAILED with exit code {}: {}", step.name, rc, " ".join(cmd[1:]))
                 return rc
         if step.has_manifest:
-            bad = failed_dates(MANIFEST_DIR / f"{step.name}.jsonl", start, today)
+            failed = failed_records(MANIFEST_DIR / f"{step.name}.jsonl", start, today)
+            # pending = not yet published: the key STARTS today or later. A range that starts earlier covers days that should exist.
+            pending = [k for k in failed if _first_date(k) is not None and _first_date(k) >= today]
+            if pending:
+                logger.info("step {}: {} not yet published, not checked (today or later, next run retries): {}",
+                            step.name, len(pending), pending)
+                failed = {k: e for k, e in failed.items() if k not in pending}
+            equity_last = last_records(MANIFEST_DIR / "bhavcopy.jsonl") if failed else {}
+            excused = [k for k, e in failed.items() if is_expected_stale_reserve(step.name, k, e, equity_last)]
+            if excused:
+                logger.info("step {}: {} date(s) with an expected stale re-serve on a non-session (excused): {}",
+                            step.name, len(excused), excused)
+            bad = [k for k in failed if k not in excused]
             if bad:
                 logger.error("step {} FAILED: the manifest records `failed` for {} date(s) in {}..{} despite exit 0: {}",
                              step.name, len(bad), start, today, bad[:20])
