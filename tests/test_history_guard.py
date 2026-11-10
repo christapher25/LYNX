@@ -520,3 +520,132 @@ def test_a_T4_type_change_plus_changed_ex_date_fails(tmp_path):
                     _ca_frame("AAA", ["2026-10-05"], ratio=[2.0]).astype(object)], ignore_index=True)
     df.to_parquet(w.actions / "AAA.parquet")
     assert "date column differs" in failing_text(w.verify())
+
+
+# ------------------------------------------------------------------ R20-2 (c): owner-approved expected changes
+def _entry(symbol, ex_date, action_type, factor):
+    return {"symbol": symbol, "ex_date": ex_date, "action_type": action_type, "adjustment_factor": factor}
+
+
+BONUS = _entry("AAA", "2026-09-28", "bonus", 0.5)
+DIV = _entry("BBB", "2026-09-23", "dividend", None)
+
+
+def _write_expected(w, actions, cutoff=CUTOFF, **extra):
+    path = w.root / "expected.json"
+    path.write_text(json.dumps({"history_cutoff": cutoff, "actions": actions, **extra}))
+    return path
+
+
+def _add_rows(path, *entries, **overrides):
+    df = pd.read_parquet(path).astype(object)
+    rows = pd.DataFrame({
+        "symbol": [e["symbol"] for e in entries], "ex_date": pd.to_datetime([e["ex_date"] for e in entries]),
+        "action_type": [e["action_type"] for e in entries], "raw_subject": ["new"] * len(entries),
+        "adjustment_factor": pd.Series([e["adjustment_factor"] for e in entries], dtype=object),
+        "ratio": pd.Series([None] * len(entries), dtype=object), "record_date": pd.Series([None] * len(entries), dtype=object),
+    }).astype(object)
+    pd.concat([df, rows], ignore_index=True).to_parquet(path)
+
+
+def _verify_expected(w, actions, **kw):
+    return hg.verify(w.sources(), expected=hg.load_expected(_write_expected(w, actions, **kw)))
+
+
+def _approved_world(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _add_rows(w.actions / "AAA.parquet", BONUS)
+    _add_rows(w.actions / "BBB.parquet", DIV)
+    return w
+
+
+def _adj_change(w, symbol):
+    w.edit(w.adjusted / f"{symbol}.parquet", lambda d: d.__setitem__("ADJ_CLOSE", d["ADJ_CLOSE"] * 0.5))
+
+
+def test_c_T5_approved_bonus_and_dividend_pass_and_are_listed(tmp_path):
+    w = _approved_world(tmp_path)
+    _adj_change(w, "AAA")
+    r = _verify_expected(w, [BONUS, DIV])
+    assert r.failures == [], failing_text(r)
+    added = [a for a in r.allowed if "owner-approved action(s) added" in a]
+    assert len(added) == 2 and any("bonus" in a for a in added) and any("dividend" in a for a in added)
+    assert any("adjusted:AAA" in a and "owner-approved correction" in a for a in r.allowed)
+    assert r.kinds["owner-approved"] == 3
+
+
+def test_c_T5_dividend_only_symbol_gets_no_adjusted_exemption(tmp_path):
+    w = _approved_world(tmp_path)
+    _adj_change(w, "BBB")
+    r = _verify_expected(w, [BONUS, DIV])
+    assert "adjusted:BBB" in failing_text(r)
+
+
+def test_c_without_the_option_the_added_rows_fail(tmp_path):
+    w = _approved_world(tmp_path)
+    assert "corporate_actions:AAA" in failing_text(w.verify())
+
+
+def test_c_T6_approved_row_plus_altered_history_row_fails(tmp_path):
+    w = _approved_world(tmp_path)
+    w.edit(w.actions / "AAA.parquet", lambda d: d.__setitem__("raw_subject", ["x", "CHANGED", "new"]))
+    assert "corporate_actions:AAA" in failing_text(_verify_expected(w, [BONUS, DIV]))
+
+
+def test_c_T7_expected_entry_not_present_fails(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    assert "expected action not present" in failing_text(_verify_expected(w, [BONUS]))
+
+
+def test_c_T7_entry_matching_two_rows_is_ambiguous(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _add_rows(w.actions / "AAA.parquet", BONUS, BONUS)
+    assert "ambiguous" in failing_text(_verify_expected(w, [BONUS]))
+
+
+def test_c_T7_unapproved_extra_history_row_beside_an_approved_one_fails(tmp_path):
+    w = _approved_world(tmp_path)
+    _add_rows(w.actions / "AAA.parquet", _entry("AAA", "2026-09-27", "split", 0.25))
+    r = _verify_expected(w, [BONUS, DIV])
+    assert "corporate_actions:AAA" in failing_text(r)
+
+
+def test_c_T7_wrong_cutoff_fails(tmp_path):
+    w = _approved_world(tmp_path)
+    r = _verify_expected(w, [BONUS, DIV], cutoff="2026-09-28")
+    assert "history_cutoff" in failing_text(r)
+
+
+def test_c_T7_expected_entry_for_symbol_without_a_unit_fails(tmp_path):
+    w = _approved_world(tmp_path)
+    r = _verify_expected(w, [BONUS, DIV, _entry("ZZZ", "2026-09-01", "dividend", None)])
+    assert "ZZZ" in failing_text(r)
+
+
+def test_c_T7_malformed_json_exits_1_and_bad_entries_are_rejected(tmp_path):
+    w = _approved_world(tmp_path)
+    bad = w.root / "bad.json"
+    bad.write_text("{not json")
+    assert hg.main(["verify", "--expected-changes", str(bad)], sources=w.sources()) == 1
+    for payload in ({"actions": []}, {"history_cutoff": CUTOFF, "actions": [{"symbol": "AAA"}]},
+                    {"history_cutoff": CUTOFF, "actions": "x"}):
+        bad.write_text(json.dumps(payload))
+        assert hg.main(["verify", "--expected-changes", str(bad)], sources=w.sources()) == 1
+
+
+def test_c_cli_accepts_approved_changes_and_ignores_extra_keys(tmp_path):
+    w = _approved_world(tmp_path)
+    _adj_change(w, "AAA")
+    path = _write_expected(w, [BONUS, DIV], note="extra keys are ignored")
+    assert hg.main(["verify", "--expected-changes", str(path)], sources=w.sources()) == 0
+
+
+def test_c_float_factor_is_compared_after_rounding(tmp_path):
+    w = _ca_world(tmp_path)
+    w.snapshot()
+    _add_rows(w.actions / "AAA.parquet", _entry("AAA", "2026-09-28", "bonus", 0.1 + 0.2))
+    r = _verify_expected(w, [_entry("AAA", "2026-09-28", "bonus", 0.3)])
+    assert r.failures == [], failing_text(r)

@@ -269,13 +269,13 @@ def new_action_symbols(actions_dir: Path, cutoff: pd.Timestamp) -> set[str]:
 
 
 def _compare_units(name: str, key: str, old: dict | None, new: dict | None, allowed_adj: set[str], adj_cols: frozenset[str],
-                   report: Report) -> None:
+                   report: Report, approved_adj: frozenset[str] | set[str] = frozenset()) -> None:
     """allowed_adj: symbols with a new factor-bearing action. Only `adjusted` ADJ_* differences for them are allowed; for any
     other failing unit of such a symbol the line is labelled (informational, still a failure)."""
     where = f"{name}:{key}"
     before = len(report.failures)
     try:
-        _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, report)
+        _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, report, approved_adj)
     finally:
         if key in allowed_adj:
             for i in range(before, len(report.failures)):
@@ -290,7 +290,7 @@ def _empty_column_type_changes(old: dict, new: dict, changed: list[str]) -> list
     return [c for c in changed if old["columns"][c] in shapes and c in now_empty]
 
 
-def _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, report) -> None:
+def _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, report, approved_adj=frozenset()) -> None:
     if old is None:
         report.failures.append(f"{where}: unit has rows <= cutoff now but did not at snapshot ({new['rows']} rows added)")
         return
@@ -319,11 +319,66 @@ def _compare_units_inner(name, key, where, old, new, allowed_adj, adj_cols, repo
         return
     if name == "adjusted" and key in allowed_adj and all(c in adj_cols for c in changed):
         report.allow("new-action adjusted", f"{where}: adjusted column(s) {changed} changed; symbol has a new corporate action after the cutoff")
+    elif name == "adjusted" and key in approved_adj and all(c in adj_cols for c in changed):
+        report.allow("owner-approved", f"{where}: adjusted column(s) {changed} changed; owner-approved correction")
     else:
         report.failures.append(f"{where}: column(s) changed {changed}")
 
 
-def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False) -> Report:
+def load_expected(path: Path | str) -> dict:
+    """Parse and validate an --expected-changes file. Raises ValueError on anything malformed (the CLI turns it into a FAIL)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read expected-changes file {path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("history_cutoff"), str) or not isinstance(data.get("actions"), list):
+        raise ValueError("expected-changes file needs a string history_cutoff and a list actions")
+    entries = []
+    for i, e in enumerate(data["actions"]):
+        if not isinstance(e, dict) or not {"symbol", "ex_date", "action_type", "adjustment_factor"} <= set(e):
+            raise ValueError(f"expected-changes action #{i} needs symbol, ex_date, action_type, adjustment_factor")
+        f = e["adjustment_factor"]
+        if f is not None and (isinstance(f, bool) or not isinstance(f, (int, float))):
+            raise ValueError(f"expected-changes action #{i}: adjustment_factor must be a number or null")
+        if not isinstance(e["symbol"], str) or not isinstance(e["action_type"], str):
+            raise ValueError(f"expected-changes action #{i}: symbol and action_type must be strings")
+        try:
+            ex = pd.Timestamp(e["ex_date"])
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"expected-changes action #{i}: bad ex_date {e['ex_date']!r}") from exc
+        entries.append({"symbol": e["symbol"], "ex_date": ex.normalize(), "action_type": e["action_type"],
+                        "adjustment_factor": None if f is None else round(float(f), 12)})
+    return {"history_cutoff": data["history_cutoff"], "actions": entries}
+
+
+def _describe(e: dict) -> str:
+    return f"{e['symbol']} {e['ex_date'].date()} {e['action_type']} factor={e['adjustment_factor']}"
+
+
+def _remove_expected(path: Path, cutoff: pd.Timestamp, entries: list[dict], report: Report) -> dict | None:
+    """The unit of the file's history rows after removing exactly one row per expected entry; None (failure recorded) if an entry
+    matches zero or several rows."""
+    frame, col = _history(pd.read_parquet(path), cutoff)
+    ex = pd.to_datetime(frame["ex_date"])
+    factor = pd.to_numeric(frame["adjustment_factor"], errors="coerce").round(12)
+    ok = True
+    for e in entries:
+        same_factor = factor.isna() if e["adjustment_factor"] is None else factor == e["adjustment_factor"]
+        match = (ex == e["ex_date"]) & (frame["action_type"] == e["action_type"]) & same_factor
+        if int(match.sum()) == 0:
+            report.failures.append(f"corporate_actions:{e['symbol']}: expected action not present: {_describe(e)}")
+            ok = False
+        elif int(match.sum()) > 1:
+            report.failures.append(f"corporate_actions:{e['symbol']}: expected action is ambiguous ({int(match.sum())} rows): {_describe(e)}")
+            ok = False
+        else:
+            frame, ex, factor = frame[~match], ex[~match], factor[~match]
+    if not ok:
+        return None
+    return _digest_frame(frame, col, track_all_null=True) if len(frame) else None
+
+
+def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, expected: dict | None = None) -> Report:
     """Recompute and compare. Fails if the index is missing, if any indexed dataset has no snapshot file or cannot be
     enumerated now, or if a dataset exists now that the index does not list. indicators may only be absent when the index says
     it was skipped AND skip_db is set."""
@@ -351,6 +406,19 @@ def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False) -
             report.failures.append(f"{n}: snapshot file {n}.json is missing")
     adj_cols = adjusted_columns()
     new_actions = new_action_symbols(src.actions_dir, pd.Timestamp(index["cutoff"]))
+    by_symbol: dict[str, list[dict]] = {}
+    approved_adj: set[str] = set()
+    if expected is not None:
+        if expected["history_cutoff"] != index["cutoff"]:
+            report.failures.append(f"expected-changes history_cutoff {expected['history_cutoff']} differs from the snapshot cutoff {index['cutoff']}")
+            return report
+        if "corporate_actions" not in names:
+            report.failures.append("expected-changes given but corporate_actions is not being verified")
+            return report
+        for e in expected["actions"]:
+            by_symbol.setdefault(e["symbol"], []).append(e)
+            if e["adjustment_factor"] is not None:
+                approved_adj.add(e["symbol"])
     for name in names:
         path = src.out_dir / f"{name}.json"
         if name not in indexed or name not in now_names or not path.exists():
@@ -363,8 +431,24 @@ def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False) -
         except Exception as exc:  # a dataset that cannot be recomputed is a failure, never a skip
             report.failures.append(f"{name}: cannot recompute ({type(exc).__name__}: {exc})")
             continue
+        skip: set[str] = set()
+        if name == "corporate_actions":
+            for sym, entries in by_symbol.items():
+                skip.add(sym)
+                if sym not in now:
+                    report.failures.append(f"corporate_actions:{sym}: expected actions given but the symbol has no corporate-actions unit now")
+                    continue
+                nfail = len(report.failures)
+                remainder = _remove_expected(src.actions_dir / f"{sym}.parquet", pd.Timestamp(cutoff), entries, report)
+                if len(report.failures) > nfail:
+                    continue
+                _compare_units(name, sym, snap["units"].get(sym), remainder, new_actions, adj_cols, report)
+                if len(report.failures) == nfail:
+                    report.allow("owner-approved", f"corporate_actions:{sym}: {len(entries)} owner-approved action(s) added: "
+                                 + "; ".join(_describe(e) for e in entries))
         for key in sorted(set(snap["units"]) | set(now)):
-            _compare_units(name, key, snap["units"].get(key), now.get(key), new_actions, adj_cols, report)
+            if key not in skip:
+                _compare_units(name, key, snap["units"].get(key), now.get(key), new_actions, adj_cols, report, approved_adj)
         logger.info("verified {} against snapshot (cutoff {})", name, cutoff)
     return report
 
@@ -380,6 +464,7 @@ def main(argv=None, sources: Sources | None = None) -> int:
     v = sub.add_parser("verify")
     v.add_argument("--only", nargs="*", help="dataset names to verify (default: every indexed dataset)")
     v.add_argument("--skip-db", action="store_true", help="valid only if the snapshot was also made with --skip-db")
+    v.add_argument("--expected-changes", metavar="PATH", help="JSON of owner-approved corporate actions added before the cutoff")
     args = parser.parse_args(argv)
 
     src = sources if sources is not None else default_sources(skip_db=getattr(args, "skip_db", False))
@@ -391,7 +476,15 @@ def main(argv=None, sources: Sources | None = None) -> int:
             return 1
         return 0
 
-    report = verify(src, args.only, skip_db=args.skip_db)
+    expected = None
+    if args.expected_changes:
+        try:
+            expected = load_expected(args.expected_changes)
+        except ValueError as exc:
+            logger.error("FAIL {}", exc)
+            logger.error("history guard FAILED: expected-changes file rejected, nothing verified")
+            return 1
+    report = verify(src, args.only, skip_db=args.skip_db, expected=expected)
     for line in report.allowed:
         logger.warning("ALLOWED {}", line)
     for line in report.failures:
