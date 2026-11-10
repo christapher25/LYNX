@@ -73,9 +73,11 @@ def modules(calls):
 def write_manifest(sandbox_dir, step, records):
     path = sandbox_dir / "manifests" / f"{step}.jsonl"
     with path.open("a", encoding="utf-8") as f:
-        for day, status in records:
+        for rec in records:
+            day, status = rec[0], rec[1]
+            error = rec[2] if len(rec) > 2 else ("boom" if status == "failed" else "")
             f.write(json.dumps({"trade_date": day, "status": status, "rows": 0, "bytes_downloaded": 0,
-                                "format_era": "", "error": "boom" if status == "failed" else ""}) + "\n")
+                                "format_era": "", "error": error}) + "\n")
 
 
 def capture(level="WARNING"):
@@ -420,3 +422,164 @@ def test_undecodable_bytes_in_manifest_do_not_crash(fake, sandbox):
     with (sandbox / "manifests" / "bhavcopy.jsonl").open("ab") as f:
         f.write(b'\xff\xfe{"trade_date"\n')
     assert rdr.main(["--only", "bhavcopy"]) == 0
+
+
+# ---- stale re-serve on a non-session is excused (never anything else) ---------------------------------------
+def stale(day, earlier):
+    return f"file dated {earlier}, requested {day}"
+
+
+def run_bhavdata(sandbox, start="2026-10-01"):
+    msgs, sink = capture("INFO")
+    try:
+        rc = rdr.main(["--only", "bhavdata", "--start", start])
+    finally:
+        logger.remove(sink)
+    return rc, msgs
+
+
+def test_stale_reserve_on_equity_holiday_is_excused(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    rc, msgs = run_bhavdata(sandbox)
+    assert rc == 0
+    assert any("expected stale re-serve on a non-session" in m and "2026-10-02" in m for m in msgs)
+
+
+def test_stale_reserve_on_weekend_with_equity_holiday_is_excused(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-04", "holiday"), ("2026-10-03", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-04", "failed", stale("2026-10-04", "2026-10-02")),
+                                         ("2026-10-03", "failed", stale("2026-10-03", "2026-10-02"))])
+    rc, msgs = run_bhavdata(sandbox)
+    assert rc == 0
+    assert any("expected stale re-serve on a non-session" in m and "2026-10-04" in m and "2026-10-03" in m for m in msgs)
+
+
+def test_mutant_weekend_with_no_equity_record_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavdata", [("2026-10-04", "failed", stale("2026-10-04", "2026-10-02"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+@pytest.mark.parametrize("equity_status", ["failed", "empty", "ok"])
+@pytest.mark.parametrize("day", ["2026-10-04", "2026-10-02"])  # a Sunday and a weekday
+def test_mutant_equity_not_holiday_fails_on_weekend_and_weekday(fake, sandbox, equity_status, day):
+    write_manifest(sandbox, "bhavcopy", [(day, equity_status)])
+    write_manifest(sandbox, "bhavdata", [(day, "failed", stale(day, "2026-10-01"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_a_step_never_excuses_itself_bhavcopy_weekend_stale_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-04", "failed", stale("2026-10-04", "2026-10-02"))])
+    assert rdr.main(["--only", "bhavcopy", "--start", "2026-10-01"]) != 0
+
+
+def test_bhavcopy_step_stale_fails_even_if_a_holiday_record_followed_elsewhere(fake, sandbox):
+    # the bhavcopy step's own manifest can only say failed OR holiday for a date; a failed last record stays failed
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert rdr.main(["--only", "bhavcopy", "--start", "2026-10-01"]) != 0
+
+
+@pytest.mark.parametrize("step", ["fno_bhavcopy", "indices", "price_band_hits"])
+def test_same_excuse_applies_through_other_steps(fake, sandbox, step):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    write_manifest(sandbox, step, [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert rdr.main(["--only", step, "--start", "2026-10-01"]) == 0
+    (sandbox / "manifests" / "bhavcopy.jsonl").unlink()
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "ok")])
+    assert rdr.main(["--only", step, "--start", "2026-10-01"]) != 0
+
+
+# ---- today and later are not checked (not yet published) -------------------------------------------------------
+def test_failed_today_is_not_checked_and_logged_as_not_yet_published(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [(TODAY.isoformat(), "failed", "404 not yet")])
+    msgs, sink = capture("INFO")
+    try:
+        rc = rdr.main(["--only", "bhavcopy"])
+    finally:
+        logger.remove(sink)
+    assert rc == 0
+    assert sum("not yet published, not checked" in m and TODAY.isoformat() in m for m in msgs) == 1
+
+
+def test_failed_yesterday_still_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-11-09", "failed", "timeout")])
+    assert rdr.main(["--only", "bhavcopy"]) != 0
+
+
+def test_failed_after_today_is_not_checked(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-11-11", "failed", "x")])
+    assert rdr.main(["--only", "bhavcopy"]) == 0
+
+
+def test_today_pending_does_not_hide_a_real_failure(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [(TODAY.isoformat(), "failed", "x"), ("2026-11-09", "failed", "timeout")])
+    msgs, sink = capture("ERROR")
+    try:
+        rc = rdr.main(["--only", "bhavcopy"])
+    finally:
+        logger.remove(sink)
+    assert rc != 0 and "2026-11-09" in " ".join(msgs)
+
+
+def test_weekend_with_equity_ok_record_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-04", "ok")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-04", "failed", stale("2026-10-04", "2026-10-02"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_mutant_equity_file_exists_for_the_date_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    (sandbox / "data" / "bhavcopy" / "2026-10-02.parquet").write_bytes(b"")
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_mutant_equity_says_ok_on_a_weekday_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "ok")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_weekday_with_no_equity_record_at_all_fails(fake, sandbox):
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_equity_last_record_decides_not_an_earlier_holiday(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday"), ("2026-10-02", "ok")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01"))])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+@pytest.mark.parametrize("error", [
+    "connection reset", "boom", "file dated 2026-10-01 requested 2026-10-02", "parsed to zero rows",
+    "file dated 2026-10-02, requested 2026-10-02",   # equal
+    "file dated 2026-10-03, requested 2026-10-02",   # later
+    "file dated 2026-10-01, requested 2026-10-05",   # requested date differs from the manifest key
+    "",
+])
+def test_mutant_other_error_text_or_non_earlier_file_date_fails(fake, sandbox, error):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", error)])
+    assert run_bhavdata(sandbox)[0] != 0
+
+
+def test_one_real_failure_among_excused_ones_still_fails_and_names_only_the_real_one(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01")),
+                                         ("2026-10-06", "failed", "timeout")])
+    msgs, sink = capture("ERROR")
+    try:
+        rc = rdr.main(["--only", "bhavdata", "--start", "2026-10-01"])
+    finally:
+        logger.remove(sink)
+    assert rc != 0
+    err = " ".join(msgs)
+    assert "2026-10-06" in err and "2026-10-02" not in err
+
+
+def test_excuse_applies_to_the_last_record_only(fake, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-10-02", "holiday")])
+    write_manifest(sandbox, "bhavdata", [("2026-10-02", "failed", stale("2026-10-02", "2026-10-01")),
+                                         ("2026-10-02", "failed", "timeout")])
+    assert run_bhavdata(sandbox)[0] != 0
