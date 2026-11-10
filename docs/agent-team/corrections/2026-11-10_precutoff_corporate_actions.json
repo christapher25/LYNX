@@ -1,0 +1,685 @@
+{
+ "approved_by": "owner, DECISIONS-OWNER.md 2026-11-10 decision 2",
+ "source_log": "logs/jobs/refresh_corporate_actions_20261110_145146.err.log (NOT added lines)",
+ "history_cutoff": "2026-09-29",
+ "actions": [
+  {
+   "symbol": "AAATECH",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AARTECH",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AARTISURF",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AASTHA",
+   "ex_date": "2026-09-28",
+   "action_type": "bonus",
+   "adjustment_factor": 0.5
+  },
+  {
+   "symbol": "ABINFRA",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AGIIL",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AHLUCONT",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ALICON",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ANDHRSUGAR",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "APOLLO",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "APOLSINHOT",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ARFIN",
+   "ex_date": "2026-09-24",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ARIHANTCAP",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ASAHISONG",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ASHAPURMIN",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ASHIANA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "AURIONPRO",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BAJAJELEC",
+   "ex_date": "2026-07-17",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BAJAJHLDNG",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BDL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BEARDSELL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BESTAGRO",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "BSOFT",
+   "ex_date": "2026-07-10",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CERA",
+   "ex_date": "2026-07-07",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CLSEL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CNL",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "COMSYN",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CONCOR",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CONFIPET",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "CYBERTECH",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "DCW",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "DDEVPLSTIK",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "DECCANCE",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "DEVIT",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "DIXON",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ENGINERSIN",
+   "ex_date": "2026-09-24",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "FISCHER",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GALLANTT",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GMDCLTD",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GOCLCORP",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GOODLUCK",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GTPL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GUJAPOLLO",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GUJTHEM",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "GVPTECH",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HALEOSLABS",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HARIOMPIPE",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HFCL",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HINDCOMPOS",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HITECHGEAR",
+   "ex_date": "2026-09-15",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "HLEGLAS",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ICEMAKE",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "IRCTC",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ISGEC",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "JAICORPLTD",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "JAMNAAUTO",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "JGCHEM",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "JSLL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "KEYFINSERV",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "KINGFA",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "KPEL",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "KPIGREEN",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "KRISHIVAL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "LAKSHMIMIL",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "LAMBODHARA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "LANCORHOL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "LFIC",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "LOTUSDEV",
+   "ex_date": "2026-09-25",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MAHSCOOTER",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MAITHANALL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MALLCOM",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MANALIPETC",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MANYAVAR",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MIDHANI",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MONTECARLO",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "MOREPENLAB",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "NAVKARURB",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "NIBE",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "NIPPOBATRY",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "NLCINDIA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "OLECTRA",
+   "ex_date": "2026-09-18",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ONELIFECAP",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ORICONENT",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "PARAGMILK",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "PASHUPATI",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "PNBGILTS",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "PNCINFRA",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "PREMEXPLN",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "QPOWER",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "RAJOOENG",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "REMSONSIND",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "REPCOHOME",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "RMDRIP",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ROTO",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "RUBFILA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "RUCHIRA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SATIA",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SHIVALIK",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SIGACHI",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SIGIND",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SMSPHARMA",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SPIC",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SREEL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SSWL",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "SYNCOMF",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "TERASOFT",
+   "ex_date": "2026-09-22",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "THEMISMED",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "TITAGARH",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "VETO",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "VINCOFE",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "WIPL",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "XTGLOBAL",
+   "ex_date": "2026-09-23",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  },
+  {
+   "symbol": "ZOTA",
+   "ex_date": "2026-09-21",
+   "action_type": "dividend",
+   "adjustment_factor": null
+  }
+ ]
+}
