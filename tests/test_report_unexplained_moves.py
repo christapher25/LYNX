@@ -51,13 +51,17 @@ def _adj_frame(closes, applied=None, start="2020-01-01"):
 
 
 # T1 ------------------------------------------------------------------
-def test_t1_band_and_flag():
+def test_t1_band_and_flag(monkeypatch):
     f = _adj_frame([100, 130])
     assert len(rep.unexplained_moves("X", f)) == 1
     f2 = _adj_frame([100, 130], applied=[True, True])
     assert len(rep.unexplained_moves("X", f2)) == 0
-    f3 = _adj_frame([100, 120.0])          # exactly 20%: not strict >
-    assert len(rep.unexplained_moves("X", f3)) == 0
+    # exactly on the band (0.25 is exact in binary; 120/100-1 is not exactly 0.2): not strict >
+    import data.adjust_prices as ap
+    monkeypatch.setattr(rep, "MAX_UNEXPLAINED_MOVE", 0.25)
+    monkeypatch.setattr(ap, "MAX_UNEXPLAINED_MOVE", 0.25)
+    assert len(rep.unexplained_moves("X", _adj_frame([100, 125.0]))) == 0
+    assert len(rep.unexplained_moves("X", _adj_frame([100, 125.1]))) == 1
     f4 = _adj_frame([100])                 # first row NaN return
     assert len(rep.unexplained_moves("X", f4)) == 0
 
