@@ -89,9 +89,18 @@ def decision_weeks(start: pd.Timestamp, end: pd.Timestamp | None) -> list[pd.Tim
     return [pd.Timestamp(d) for d in sorted(weekly) if pd.Timestamp(start) <= d <= upper]
 
 
+def _code_head() -> str | None:
+    """The checkout's git HEAD, recorded so the statement can be checked against the code that ran. None if git cannot say."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(config.PROJECT_ROOT), capture_output=True, text=True, timeout=30)
+    except Exception:                                                            # noqa: BLE001
+        return None
+    return out.stdout.strip() or None if out.returncode == 0 else None
+
+
 def _record(date, status, code, started, ended) -> None:
     rec = {"decision_date": str(pd.Timestamp(date).date()), "status": status, "child_exit_code": code,
-           "started_utc": started, "ended_utc": ended, "statement": STATEMENT}
+           "started_utc": started, "ended_utc": ended, "code_head": _code_head(), "statement": STATEMENT}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     with (LOG_DIR / "paper_log_backfill.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec) + "\n")
@@ -109,8 +118,10 @@ def _check_rows(date) -> str | None:
     latest = _latest_equity()
     if latest is None or pd.isna(latest):
         return "the latest equity session is unknown: cannot verify the late flag"
-    if pd.Timestamp(latest) > pd.Timestamp(date) and not rows["late"].astype(bool).all():
-        return "a later session exists in the data but some rows are not flagged late"
+    late = rows["late"]
+    # a missing flag is missing, never True (astype(bool) would turn NaN into True)
+    if pd.Timestamp(latest) > pd.Timestamp(date) and not (late.notna() & (late == True)).all():   # noqa: E712
+        return "a later session exists in the data but some rows are not flagged late (or the flag is missing)"
     return None
 
 

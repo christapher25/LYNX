@@ -208,3 +208,34 @@ def test_default_lookup_reads_the_paper_log_decisions_file(tmp_path, monkeypatch
 def test_source_conventions():
     src = open(bf.__file__, encoding="utf-8").read()
     assert "print(" not in src and "append_decisions" not in src and "unlink" not in src
+
+
+# Round 1: a missing late flag is missing, never True; the jsonl records the checkout's git HEAD ------------------------
+@pytest.mark.parametrize("missing", [float("nan"), None])
+def test_round1_missing_late_flag_is_not_treated_as_late(env, missing):
+    w = env.install(World(late_value=missing))                 # a later session (2026-11-09) exists
+    assert bf.main(["--from", "2026-09-30"]) == 1
+    assert dates_called(w) == WEEKS[:1]
+    assert jsonl(env)[-1]["status"] == "failed"
+
+
+def test_round1_one_missing_late_flag_among_true_rows_fails(env, monkeypatch):
+    env.install(World())
+    d = pd.Timestamp(WEEKS[0])
+    monkeypatch.setattr(bf, "_decision_rows",
+                        lambda date: pd.DataFrame({"decision_date": [d, d, d], "late": [True, float("nan"), True]}))
+    assert bf.main(["--from", "2026-09-30"]) == 1
+    assert jsonl(env)[-1]["status"] == "failed"
+
+
+def test_round1_every_jsonl_record_carries_code_head(env, monkeypatch):
+    monkeypatch.setattr(bf, "_code_head", lambda: "abc1234")
+    assert bf.main(["--from", "2026-09-30"]) == 0
+    assert [l["code_head"] for l in jsonl(env)] == ["abc1234"] * 3
+
+
+def test_round1_code_head_is_none_when_git_is_unavailable(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no git")
+    monkeypatch.setattr(bf.subprocess, "run", boom)
+    assert bf._code_head() is None
