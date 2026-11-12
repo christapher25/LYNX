@@ -110,6 +110,9 @@ def test_removed_old_last_date_is_not_a_history_difference(tmp_path):
 def test_t6_nan_equals_nan(tmp_path):
     code, _ = run(tmp_path, frame(BASE), frame(BASE))
     assert code == 0
+    mid = frame(BASE[:2] + [("2024-01-04", np.nan, np.nan, True)] + BASE[3:])      # NaN row BEFORE the old last date
+    code, out = run(tmp_path, mid, mid.copy())
+    assert code == 0 and csv(out).empty
 
 
 def test_t6_nan_to_value_is_changed_and_flag_flip_alone_is_changed(tmp_path):
