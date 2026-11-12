@@ -1,0 +1,4 @@
+{"history_cutoff": "2026-09-29",
+ "fills": [{"dataset": "features_circuits",
+            "dates": ["2026-09-28", "2026-09-29"],
+            "missing_values": {"price_band_pct": null, "is_no_band": null, "band_is_inferred": null, "is_missing_circuit_band": true}}]}

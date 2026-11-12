@@ -649,3 +649,224 @@ def test_c_float_factor_is_compared_after_rounding(tmp_path):
     _add_rows(w.actions / "AAA.parquet", _entry("AAA", "2026-09-28", "bonus", 0.1 + 0.2))
     r = _verify_expected(w, [_entry("AAA", "2026-09-28", "bonus", 0.3)])
     assert r.failures == [], failing_text(r)
+
+
+# ------------------------------------------------------------------ R20-7: owner-approved late fills + one-time dataset exemption
+FILL_DATES = ["2026-09-28", "2026-09-29"]
+MISSING_VALUES = {"price_band_pct": None, "is_no_band": None, "band_is_inferred": None, "is_missing_circuit_band": True}
+
+
+def _circ_frame(symbol, missing_dates=FILL_DATES):
+    """features_circuits-like rows for every fixture date. Rows on missing_dates hold the MISSING shape (NaN, NaN, NaN, True)."""
+    dates = DATES.append(LATER)
+    df = pd.DataFrame({"symbol": symbol, "date": dates,
+                       "price_band_pct": 20.0, "is_no_band": 0.0, "band_is_inferred": 0.0,
+                       "is_missing_circuit_band": False, "hit_upper_circuit": False})
+    m = df["date"].isin(pd.to_datetime(missing_dates))
+    df.loc[m, ["price_band_pct", "is_no_band", "band_is_inferred"]] = np.nan
+    df.loc[m, "is_missing_circuit_band"] = True
+    return df
+
+
+def _circ_world(tmp_path, pre=None):
+    w = World(tmp_path)
+    (w.features / "circuits").mkdir()
+    for sym in ("AAA", "BBB"):
+        _circ_frame(sym).to_parquet(w.features / "circuits" / f"{sym}.parquet")
+    if pre is not None:
+        pre(w)
+    w.snapshot()
+    return w
+
+
+def _fill_in(path, dates=FILL_DATES, **overrides):
+    """The late sec_list arrives: the band columns of `dates` get their real values."""
+    df = pd.read_parquet(path)
+    m = df["date"].isin(pd.to_datetime(dates))
+    values = {"price_band_pct": 20.0, "is_no_band": 0.0, "band_is_inferred": 0.0, "is_missing_circuit_band": False, **overrides}
+    for col, val in values.items():
+        df.loc[m, col] = val
+    df.to_parquet(path)
+
+
+def _fill_all(w):
+    for sym in ("AAA", "BBB"):
+        _fill_in(w.features / "circuits" / f"{sym}.parquet")
+
+
+def _fills_file(w, dataset="features_circuits", cutoff=CUTOFF, dates=FILL_DATES, missing=MISSING_VALUES, name="fills.json"):
+    path = w.root / name
+    path.write_text(json.dumps({"history_cutoff": cutoff, "fills": [{"dataset": dataset, "dates": dates, "missing_values": missing}]}))
+    return path
+
+
+def _verify_fills(w, **kw):
+    return hg.verify(w.sources(), fills=hg.load_fills(_fills_file(w, **kw)))
+
+
+def _circuits_failures(report):
+    return [f for f in report.failures if f.startswith("features_circuits")]
+
+
+def test_e_T8_fixture_has_the_real_dtypes(tmp_path):
+    w = _circ_world(tmp_path)
+    df = pd.read_parquet(w.features / "circuits" / "AAA.parquet")
+    assert df["price_band_pct"].dtype == np.float64 and df["is_no_band"].dtype == np.float64
+    assert df["is_missing_circuit_band"].dtype == bool
+
+
+def test_e_T1_two_late_filled_dates_pass_with_the_fills_file_and_fail_without(tmp_path):
+    w = _circ_world(tmp_path)
+    _fill_all(w)
+    assert len(_circuits_failures(w.verify())) == 2                       # without the file: both symbols fail
+    r = _verify_fills(w)
+    assert r.failures == [], failing_text(r)
+    late = [a for a in r.allowed if "late fill" in a]
+    assert len(late) == 2 and r.kinds["owner-approved late fill"] == 2
+    assert any("features_circuits:AAA" in a and "2026-09-28" in a and "price_band_pct" in a for a in late)
+
+
+def test_e_a_unit_that_does_not_differ_is_not_touched_or_counted(tmp_path):
+    w = _circ_world(tmp_path)
+    _fill_in(w.features / "circuits" / "AAA.parquet")                      # only AAA changes
+    r = _verify_fills(w)
+    assert r.failures == [] and r.kinds["owner-approved late fill"] == 1
+
+
+def test_e_T2_an_old_real_band_value_that_changed_fails(tmp_path):
+    def pre(w):
+        _fill_in(w.features / "circuits" / "AAA.parquet", dates=["2026-09-28"], price_band_pct=20.0)   # a REAL band at snapshot
+    w = _circ_world(tmp_path, pre)
+    _fill_in(w.features / "circuits" / "AAA.parquet", dates=["2026-09-29"])
+    _fill_in(w.features / "circuits" / "AAA.parquet", dates=["2026-09-28"], price_band_pct=10.0)      # the old value changed
+    r = _verify_fills(w)
+    assert "features_circuits:AAA" in failing_text(r) and "price_band_pct" in failing_text(r)
+
+
+def test_e_T3_a_change_on_a_date_that_is_not_listed_fails(tmp_path):
+    def pre(w):
+        df = pd.read_parquet(w.features / "circuits" / "AAA.parquet")
+        m = df["date"] == pd.Timestamp("2026-09-25")
+        df.loc[m, ["price_band_pct", "is_no_band", "band_is_inferred"]] = np.nan
+        df.loc[m, "is_missing_circuit_band"] = True
+        df.to_parquet(w.features / "circuits" / "AAA.parquet")
+    w = _circ_world(tmp_path, pre)
+    _fill_in(w.features / "circuits" / "AAA.parquet", dates=FILL_DATES + ["2026-09-25"])
+    assert "features_circuits:AAA" in failing_text(_verify_fills(w))
+
+
+def test_e_T4_a_column_that_is_not_listed_fails(tmp_path):
+    w = _circ_world(tmp_path)
+    _fill_all(w)
+    w.edit(w.features / "circuits" / "AAA.parquet",
+           lambda d: d.loc.__setitem__((d["date"] == pd.Timestamp("2026-09-28"), "hit_upper_circuit"), True))
+    r = _verify_fills(w)
+    assert "features_circuits:AAA" in failing_text(r) and "hit_upper_circuit" in failing_text(r)
+    assert not any("features_circuits:BBB" in f for f in r.failures)      # BBB is still fine
+
+
+def test_e_T5_added_or_removed_history_rows_fail(tmp_path):
+    w = _circ_world(tmp_path)
+    _fill_all(w)
+    path = w.features / "circuits" / "AAA.parquet"
+    df = pd.read_parquet(path)
+    extra = df.iloc[[0]].copy()
+    extra["date"] = pd.Timestamp("2026-09-26")
+    pd.concat([df, extra], ignore_index=True).to_parquet(path)            # a row added inside history
+    bbb = w.features / "circuits" / "BBB.parquet"
+    pd.read_parquet(bbb).iloc[1:].to_parquet(bbb)                          # one removed
+    text = failing_text(_verify_fills(w))
+    assert "features_circuits:AAA" in text and "features_circuits:BBB" in text and "row count" in text
+
+
+def test_e_T6_the_same_change_in_a_dataset_that_is_not_listed_fails(tmp_path):
+    def pre(w):
+        w.edit(w.features / "delivery" / "AAA.parquet",
+               lambda d: d.loc.__setitem__((d["date"].isin(pd.to_datetime(FILL_DATES)), "delivery_pct"), np.nan))
+    w = _circ_world(tmp_path, pre)
+    w.edit(w.features / "delivery" / "AAA.parquet",
+           lambda d: d.loc.__setitem__((d["date"].isin(pd.to_datetime(FILL_DATES)), "delivery_pct"), 15.0))
+    # the fills file lists features_circuits only, but its admitted columns include delivery_pct so that a guard that
+    # applied the fills to EVERY features_* dataset would wrongly accept this change
+    r = _verify_fills(w, missing={**MISSING_VALUES, "delivery_pct": None})
+    assert "features_delivery:AAA" in failing_text(r)
+
+
+def test_e_T7_bad_fill_files_fail_closed(tmp_path):
+    w = _circ_world(tmp_path)
+    bad = w.root / "bad.json"
+    bad.write_text("{not json")
+    assert hg.main(["verify", "--expected-fills", str(bad)], sources=w.sources()) == 1
+    for kwargs in ({"cutoff": "2026-09-28"}, {"dataset": "adjusted"}, {"dataset": "corporate_actions"}):
+        assert hg.main(["verify", "--expected-fills", str(_fills_file(w, **kwargs))], sources=w.sources()) == 1
+    for payload in ({"fills": []}, {"history_cutoff": CUTOFF, "fills": "x"}, {"history_cutoff": CUTOFF, "fills": [{"dataset": "features_circuits"}]}):
+        bad.write_text(json.dumps(payload))
+        assert hg.main(["verify", "--expected-fills", str(bad)], sources=w.sources()) == 1
+    # a features_ dataset that is not in the snapshot, or not being verified, fails
+    assert "features_nothing" in failing_text(hg.verify(w.sources(), fills=hg.load_fills(_fills_file(w, dataset="features_nothing"))))
+    r = hg.verify(w.sources(), only=["adjusted"], fills=hg.load_fills(_fills_file(w)))
+    assert "features_circuits" in failing_text(r)
+
+
+def test_e_cli_passes_with_the_fills_file_and_logs_the_late_fill_count(tmp_path):
+    from loguru import logger
+    w = _circ_world(tmp_path)
+    _fill_all(w)
+    msgs = []
+    sink = logger.add(lambda m: msgs.append(str(m)), level="INFO")
+    try:
+        assert hg.main(["verify", "--expected-fills", str(_fills_file(w))], sources=w.sources()) == 0
+    finally:
+        logger.remove(sink)
+    assert any("late fill=2" in m for m in msgs)
+    assert hg.main(["verify"], sources=w.sources()) == 1                  # and fails without it
+
+
+def _breadth_world(tmp_path):
+    w = World(tmp_path)
+    (w.features / "breadth").mkdir()
+    pd.DataFrame({"date": DATES.append(LATER), "adv": np.arange(6.0)}).to_parquet(w.features / "breadth" / "daily.parquet")
+    w.snapshot()
+    w.edit(w.features / "breadth" / "daily.parquet", lambda d: d.__setitem__("adv", d["adv"] + 1))   # the one-time rebuild
+    return w
+
+
+def test_f_T9_an_exempt_dataset_is_not_compared_and_is_announced(tmp_path):
+    from loguru import logger
+    w = _breadth_world(tmp_path)
+    assert "features_breadth" in failing_text(w.verify())                  # fails without the flag
+    r = hg.verify(w.sources(), exempt=["features_breadth"])
+    assert r.failures == [] and r.exempt == ["features_breadth"]
+    msgs = []
+    sink = logger.add(lambda m: msgs.append(str(m)), level="INFO")
+    try:
+        assert hg.main(["verify", "--exempt-dataset", "features_breadth"], sources=w.sources()) == 0
+    finally:
+        logger.remove(sink)
+    assert any("EXEMPT features_breadth: not verified in this run (owner-approved one-time exemption)" in m for m in msgs)
+    assert any("exempt datasets=1" in m for m in msgs)
+
+
+def test_f_T9_only_features_datasets_can_be_exempted(tmp_path):
+    # everything is clean except `adjusted`, so the ONLY reason to fail is the refusal to exempt it
+    w = World(tmp_path)
+    w.snapshot()
+    w.edit(w.adjusted / "AAA.parquet", lambda d: d.__setitem__("ADJ_CLOSE", d["ADJ_CLOSE"] * 2))
+    assert hg.main(["verify", "--exempt-dataset", "adjusted"], sources=w.sources()) == 1
+    r = hg.verify(w.sources(), exempt=["adjusted"])
+    assert "only per-symbol features_*" in failing_text(r) and r.exempt == []
+    w.edit(w.adjusted / "AAA.parquet", lambda d: d.__setitem__("ADJ_CLOSE", d["ADJ_CLOSE"] / 2))   # adjusted clean again
+    assert hg.main(["verify", "--exempt-dataset", "corporate_actions"], sources=w.sources()) == 1  # refused although clean
+
+
+def test_f_T9_exempt_name_must_be_in_the_index_and_only_that_dataset_is_excused(tmp_path):
+    w = _breadth_world(tmp_path)
+    assert "features_nothing" in failing_text(hg.verify(w.sources(), exempt=["features_breadth", "features_nothing"]))
+    # exempting one dataset does not excuse another
+    w.edit(w.features / "delivery" / "AAA.parquet", lambda d: d.__setitem__("delivery_pct", 99.0))
+    assert "features_delivery:AAA" in failing_text(hg.verify(w.sources(), exempt=["features_breadth"]))
+
+
+def test_f_nothing_is_exempt_by_default(tmp_path):
+    w = _breadth_world(tmp_path)
+    assert hg.main(["verify"], sources=w.sources()) == 1
