@@ -405,6 +405,134 @@
       "log_dir": "logs/jobs",
       "parallel_ok": true
     },
+    "history_guard_snapshot": {
+      "description": "Row 20 history guard (owner 2026-11-10 item 5): fingerprint every output row dated <= 2026-09-29 BEFORE any rebuild. Read-only on data; writes logs/history_guard/ only; refuses to overwrite an existing snapshot (needs --force, never used by the lead). Re-runnable.",
+      "module": "scripts.history_guard",
+      "args": ["snapshot", "--cutoff", "2026-09-29"],
+      "resume_args": ["snapshot", "--cutoff", "2026-09-29"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "history_guard_verify": {
+      "description": "Row 20 history guard: after a rebuild, verify every row dated <= the snapshot cutoff is unchanged (only ADJ_* price columns of symbols with a NEW factor-bearing corporate action may differ, listed as ALLOWED). Exit 1 on any other change: STOP and report, do not commit. Read-only.",
+      "module": "scripts.history_guard",
+      "args": ["verify", "--skip-db", "--expected-changes", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--expected-fills", "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json"],
+      "resume_args": ["verify", "--skip-db", "--expected-changes", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--expected-fills", "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "history_guard_verify_breadth_once": {
+      "description": "Row 20, ONE RUN ONLY (owner 2026-11-12, breadth decision A2): history guard after the breadth rebuild with features_breadth exempt; every other dataset verified as usual. Breadth is checked separately by scripts.compare_breadth against the kept old file. Do not run this entry again after 2026-11-12; the standing history_guard_verify job has no exemption.",
+      "module": "scripts.history_guard",
+      "args": ["verify", "--skip-db", "--expected-changes", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--expected-fills", "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json", "--exempt-dataset", "features_breadth"],
+      "resume_args": ["verify", "--skip-db", "--expected-changes", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--expected-fills", "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json", "--exempt-dataset", "features_breadth"],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_corporate_actions": {
+      "description": "Row 20 (owner 2026-11-10 item 1): append corporate actions with ex_date >= 2026-09-30 to the existing per-symbol files under data/raw/corporate_actions/ (merge only; never alters or removes an existing row; a failed fetch leaves the file untouched; rows dated earlier are NOT added and are logged as WARNING). Run BEFORE adjust_prices. Resumable (a rerun finds nothing new once merged). Deletes nothing.",
+      "module": "data.ingest_corporate_actions",
+      "args": ["--refresh-from", "2026-09-30"],
+      "resume_args": ["--refresh-from", "2026-09-30"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "refresh_corporate_actions_repl": {
+      "description": "Row 20: retry of the one symbol (REPL) whose corporate-actions refresh failed on a network timeout. Same merge-only rules as refresh_corporate_actions.",
+      "module": "data.ingest_corporate_actions",
+      "args": ["--refresh-from", "2026-09-30", "--symbols", "REPL"],
+      "resume_args": ["--refresh-from", "2026-09-30", "--symbols", "REPL"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "adjust_prices": {
+      "description": "Row 20 (owner 2026-11-10): Stage 4 backward price adjustment, rewrites data/processed/adjusted/<SYM>.parquet for every symbol with an action file from the refreshed bhavcopy and corporate actions. Deletes nothing; no orphan prune in this module. Run history_guard_verify afterwards (--skip-db).",
+      "module": "data.adjust_prices",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "corp_action_correction_dry_run": {
+      "description": "Row 20 (owner DECISIONS-OWNER 2026-11-10 item 2): DRY RUN of the owner-approved data correction (AASTHA bonus ex 2026-09-28 factor 0.5 + 112 pre-cutoff dividends). Fetches the 113 listed symbols from NSE single-threaded (about 0.6 s per request) and prints what would be added; writes NOTHING. Run before corp_action_correction.",
+      "module": "scripts.apply_corp_action_correction",
+      "args": ["--approved", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--dry-run"],
+      "resume_args": ["--approved", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json", "--dry-run"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "corp_action_correction": {
+      "description": "Row 20 (owner DECISIONS-OWNER 2026-11-10 item 2): owner-approved DATA CORRECTION of history dated <= 2026-09-29. Appends ONLY the 113 approved actions (each re-fetched from NSE and matched one-to-one) to the existing per-symbol files under data/raw/corporate_actions/; existing rows unchanged; atomic writes; a failed symbol is left untouched; rerun is a no-op (resumable). Deletes nothing. Summary JSON under logs/corrections/. Then adjust_prices, then history_guard_verify with --expected-changes.",
+      "module": "scripts.apply_corp_action_correction",
+      "args": ["--approved", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json"],
+      "resume_args": ["--approved", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json"],
+      "max_hours": 1,
+      "log_dir": "logs/jobs"
+    },
+    "data_refresh": {
+      "description": "Owner 2026-11-10 item 3 (weekly): the nine ingesters in order, then the downstream chain (corporate-actions refresh, adjust_prices, universe, delivery, pledging, circuits, fno with --list-orphans-only, flows, breadth) and the history guard LAST (owner-approved corrections and late fills; no exemption). Resumable: ingesters skip dates on disk; downstream steps resume from data/processed/data_refresh_checkpoint.json for the same --start and day. Deletes nothing; orphans are listed. Stops at the first failing step. A guard failure = stop and ask the owner. Expected about 1 hour (corporate-actions refresh about 31 min at one request per 0.6 s). RAM gate 2 GB. Update --start before each scheduled run to the last date already on disk.",
+      "module": "scripts.run_data_refresh",
+      "args": ["--downstream", "--start", "2026-11-09"],
+      "resume_args": ["--downstream", "--start", "2026-11-09"],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "build_universe": {
+      "description": "Row 20 (owner 2026-11-10 'then: universe and feature rebuilds'): Stage 5 point-in-time universe rebuilt from the refreshed adjusted prices; rewrites data/processed/universe/<year>.parquet. No orphan prune in this module; deletes nothing. Not checkpointed (single pass, rerun from the start). Run history_guard_verify afterwards.",
+      "module": "data.build_universe",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 3,
+      "log_dir": "logs/jobs"
+    },
+    "features_delivery": {
+      "description": "Row 20: Stage 10 delivery block, full recompute to the latest date. --list-orphans-only: orphans are LISTED, never deleted (owner 2026-11-10 item 2). Resumable from its checkpoint on a rerun. Writes data/processed/features/delivery/. Guard verify afterwards.",
+      "module": "features.blocks.delivery",
+      "args": ["--no-resume", "--list-orphans-only"],
+      "resume_args": ["--list-orphans-only"],
+      "max_hours": 6,
+      "log_dir": "logs/jobs"
+    },
+    "features_pledging": {
+      "description": "Row 20: Stage 10 pledging block, full recompute to the latest date; orphans listed, never deleted. Resumable. Writes data/processed/features/pledging/.",
+      "module": "features.blocks.pledging",
+      "args": ["--no-resume", "--list-orphans-only"],
+      "resume_args": ["--list-orphans-only"],
+      "max_hours": 6,
+      "log_dir": "logs/jobs"
+    },
+    "features_circuits": {
+      "description": "Row 20: Stage 10 circuits block, full recompute to the latest date; orphans listed, never deleted. Resumable. Writes data/processed/features/circuits/.",
+      "module": "features.blocks.circuits",
+      "args": ["--no-resume", "--list-orphans-only"],
+      "resume_args": ["--list-orphans-only"],
+      "max_hours": 6,
+      "log_dir": "logs/jobs"
+    },
+    "features_fno_row20": {
+      "description": "Row 20: Stage 10 F&O block, full recompute to the latest date WITH --list-orphans-only (the older fno_features job has no such flag and must not be used for row 20). Resumable. Writes data/processed/features/fno/.",
+      "module": "features.blocks.fno",
+      "args": ["--no-resume", "--list-orphans-only"],
+      "resume_args": ["--list-orphans-only"],
+      "max_hours": 6,
+      "log_dir": "logs/jobs"
+    },
+    "features_flows": {
+      "description": "Row 20: Stage 10 flows block (market-level, two files), rebuilt on the refreshed calendar. No per-symbol output, no prune; deletes nothing. Single pass.",
+      "module": "features.blocks.flows",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
+    "features_breadth": {
+      "description": "Row 20: Stage 10 breadth block (market-level, one file), rebuilt on the refreshed adjusted prices and universe. No prune; deletes nothing. Single pass.",
+      "module": "features.blocks.breadth",
+      "args": [],
+      "resume_args": [],
+      "max_hours": 2,
+      "log_dir": "logs/jobs"
+    },
     "refresh_bhavcopy": {
       "description": "Row 20 catch-up (owner 2026-11-10): equity bhavcopy to the latest day via the existing ingester (weekday + weekends pass). Skips dates already on disk; deletes nothing; writes data/raw only. RAM gate 2 GB.",
       "module": "scripts.run_data_refresh",
