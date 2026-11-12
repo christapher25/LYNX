@@ -943,3 +943,175 @@ def test_run_child_passes_a_non_zero_exit_code_through():
 def test_run_child_timeout_kills_the_child_and_returns_124():
     rc, _ = rdr._run_child([sys.executable, "-c", "import time; time.sleep(60)"], 1)
     assert rc == 124
+
+
+# ================================================================================================
+# R20-10: range-chunk steps (announcements): effective start after the newest chunk; superseded overlap refusals are excused
+# ================================================================================================
+ANN = "announcements"
+OVERLAP = "partially overlaps existing ['announcements_2026-11-01_2026-11-09.parquet']"
+
+
+def chunk(sandbox, a, b):
+    (sandbox / "data" / ANN / f"announcements_{a}_{b}.parquet").write_bytes(b"")
+
+
+def ann_calls(f):
+    return [c for c in f.calls if c[2] == "data.ingest_announcements"]
+
+
+@pytest.fixture
+def today12(monkeypatch):
+    monkeypatch.setattr(rdr, "_today", lambda: date(2026, 11, 12))
+
+
+def run_ann(*extra, start="2026-11-09"):
+    msgs, sink = capture("INFO")
+    try:
+        rc = rdr.main(["--only", ANN, "--start", start, *extra])
+    finally:
+        logger.remove(sink)
+    return rc, "\n".join(msgs)
+
+
+# T1 / T2 / T3 -------------------------------------------------------------------------------------
+def test_r2010_t1_start_inside_the_newest_chunk_moves_to_the_day_after_it(fake, sandbox, today12):
+    chunk(sandbox, "2026-10-01", "2026-10-31")
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    rc, _ = run_ann()
+    assert rc == 0
+    assert [c[3:] for c in ann_calls(fake)] == [["--start", "2026-11-10"]]
+
+
+def test_r2010_t2_start_after_the_chunk_end_is_unchanged(fake, sandbox, monkeypatch):
+    monkeypatch.setattr(rdr, "_today", lambda: date(2026, 11, 30))
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    rc, _ = run_ann(start="2026-11-20")
+    assert rc == 0
+    assert [c[3:] for c in ann_calls(fake)] == [["--start", "2026-11-20"]]
+
+
+def test_r2010_t3_chunk_ending_yesterday_means_already_current_and_no_child(fake, sandbox, today12):
+    chunk(sandbox, "2026-11-01", "2026-11-11")
+    rc, text = run_ann()
+    assert rc == 0
+    assert ann_calls(fake) == []
+    assert "already current through 2026-11-11" in text
+
+
+def test_r2010_days_range_is_moved_too(fake, sandbox, today12):
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    msgs, sink = capture("INFO")
+    try:
+        assert rdr.main(["--only", ANN, "--days", "5"]) == 0               # today 11-12 minus 5 = 11-07, inside the chunk
+    finally:
+        logger.remove(sink)
+    assert [c[3:] for c in ann_calls(fake)] == [["--start", "2026-11-10"]]
+
+
+def test_r2010_other_steps_are_untouched(fake, sandbox, today12):
+    (sandbox / "data" / "bhavdata" / "bhavdata_2026-11-01_2026-11-09.parquet").write_bytes(b"")
+    assert rdr.main(["--only", "bhavdata", "--start", "2026-11-09"]) == 0
+    assert all(c[3:5] == ["--start", "2026-11-09"] for c in fake.calls if c[2] == "data.ingest_bhavdata")
+
+
+# T4 -----------------------------------------------------------------------------------------------
+def test_r2010_t4_unparseable_chunk_names_are_ignored_with_a_warning(fake, sandbox, today12):
+    for name in ("announcements_bad.parquet", "foo.parquet", "announcements_2026-13-01_2026-13-09.parquet",
+                 "announcements_2026-11-09_2026-11-01.parquet"):
+        (sandbox / "data" / ANN / name).write_bytes(b"")
+    msgs, sink = capture("WARNING")
+    try:
+        rc = rdr.main(["--only", ANN, "--start", "2026-11-09"])
+    finally:
+        logger.remove(sink)
+    assert rc == 0
+    assert [c[3:] for c in ann_calls(fake)] == [["--start", "2026-11-09"]]       # nothing parsed: --start unchanged
+    assert any("announcements_bad.parquet" in m for m in msgs)
+
+
+def test_r2010_t4_a_bad_name_next_to_a_good_chunk_does_not_hide_the_good_one(fake, sandbox, today12):
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    (sandbox / "data" / ANN / "junk.parquet").write_bytes(b"")
+    rc, _ = run_ann()
+    assert rc == 0 and [c[3:] for c in ann_calls(fake)] == [["--start", "2026-11-10"]]
+
+
+# T5 / T6 -------------------------------------------------------------------------------------------
+def real_case_manifest(sandbox):
+    write_manifest(sandbox, ANN, [("2026-11-01_2026-11-09", "ok"), ("2026-11-09_2026-11-11", "failed", OVERLAP),
+                                  ("2026-11-10_2026-11-11", "ok")])
+
+
+def test_r2010_t5_the_real_case_passes_and_the_superseded_record_is_excused_and_listed(fake, sandbox, today12):
+    real_case_manifest(sandbox)
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    chunk(sandbox, "2026-11-10", "2026-11-11")
+    rc, text = run_ann()
+    assert rc == 0
+    assert "excused: overlap refusal superseded by chunks on disk" in text
+    assert "2026-11-09_2026-11-11" in text
+    assert "announcements_2026-11-01_2026-11-09.parquet" in text and "announcements_2026-11-10_2026-11-11.parquet" in text
+
+
+def test_r2010_t6_the_aligned_chunk_missing_means_the_step_fails(fake, sandbox, today12):
+    real_case_manifest(sandbox)
+    chunk(sandbox, "2026-11-01", "2026-11-09")                          # 2026-11-10_2026-11-11 file is missing
+    rc, _ = run_ann()
+    assert rc != 0
+
+
+# T7 -----------------------------------------------------------------------------------------------
+def test_r2010_t7_same_error_on_a_single_date_key_fails(fake, sandbox, today12):
+    write_manifest(sandbox, ANN, [("2026-11-09", "failed", OVERLAP)])
+    chunk(sandbox, "2026-11-01", "2026-11-11")
+    rc, _ = run_ann()
+    assert rc != 0
+
+
+def test_r2010_t7_same_error_on_a_non_range_chunk_step_fails(fake, sandbox, today12):
+    write_manifest(sandbox, "bhavdata", [("2026-11-09_2026-11-11", "failed", OVERLAP)])
+    (sandbox / "data" / "bhavdata" / "bhavdata_2026-11-01_2026-11-11.parquet").write_bytes(b"")
+    assert rdr.main(["--only", "bhavdata", "--start", "2026-11-09"]) != 0
+
+
+def test_r2010_t7_another_error_text_on_a_fully_covered_range_key_fails(fake, sandbox, today12):
+    write_manifest(sandbox, ANN, [("2026-11-09_2026-11-11", "failed", "HTTP 503")])
+    chunk(sandbox, "2026-11-01", "2026-11-11")
+    rc, _ = run_ann()
+    assert rc != 0
+
+
+def test_r2010_t7_error_text_must_start_with_the_overlap_phrase(fake, sandbox, today12):
+    write_manifest(sandbox, ANN, [("2026-11-09_2026-11-11", "failed", "boom: partially overlaps existing x")])
+    chunk(sandbox, "2026-11-01", "2026-11-11")
+    rc, _ = run_ann()
+    assert rc != 0
+
+
+# T8 -----------------------------------------------------------------------------------------------
+def test_r2010_t8_a_gap_in_the_middle_of_the_range_fails(fake, sandbox, today12):
+    write_manifest(sandbox, ANN, [("2026-11-03_2026-11-08", "failed", OVERLAP)])
+    chunk(sandbox, "2026-11-01", "2026-11-04")
+    chunk(sandbox, "2026-11-06", "2026-11-11")                          # 2026-11-05 is in no file
+    rc, _ = run_ann(start="2026-11-03")
+    assert rc != 0
+
+
+def test_r2010_t8_adjacent_chunks_cover_a_range_together(fake, sandbox, today12):
+    write_manifest(sandbox, ANN, [("2026-11-03_2026-11-08", "failed", OVERLAP)])
+    chunk(sandbox, "2026-11-01", "2026-11-04")
+    chunk(sandbox, "2026-11-05", "2026-11-11")
+    rc, text = run_ann(start="2026-11-03")
+    assert rc == 0 and "excused: overlap refusal superseded by chunks on disk" in text
+
+
+# the wrapper writes nothing for this and never edits the manifest -----------------------------------------------
+def test_r2010_the_manifest_and_chunks_are_never_edited(fake, sandbox, today12):
+    real_case_manifest(sandbox)
+    chunk(sandbox, "2026-11-01", "2026-11-09")
+    chunk(sandbox, "2026-11-10", "2026-11-11")
+    files = [sandbox / "manifests" / f"{ANN}.jsonl", *sorted((sandbox / "data" / ANN).glob("*"))]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
+    run_ann()
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before
