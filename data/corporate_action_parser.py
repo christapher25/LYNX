@@ -30,10 +30,25 @@ class ParsedAction:
 
 _BONUS_RATIO = re.compile(r"bonus.*?(\d+)\s*(?::|for|/)\s*(\d+)", re.IGNORECASE)
 
+# Face-value split: "[From] Rs|Re[.] <n> ... To Rs|Re[.] <n>". "from" is optional; Rs, Rs., Re and Re. are all accepted for each
+# amount; "/-", "Per Share" and trailing text are tolerated. Real wordings: "From Rs 10/- Per Share To Re 1/- Per Share",
+# "Fv Split Rs.10/- To Rs.2/", "Face Value Split Rs 10 To Rs 5", "Fv Split Rs.5/- To Rs.1/Rd Date Revised".
 _SPLIT_FACE_VALUE = re.compile(
+    r"\b(?:rs|re)\.?\s*(\d+(?:\.\d+)?)\s*/?-?\s*.*?\bto\s+(?:rs|re)\.?\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+# The original, stricter pattern ("from rs N ... to rs N"). It is tried FIRST over the whole subject so that every subject that parsed
+# before parses identically (a dividend "Rs 1.35" ahead of "Split From Rs 10 To Rs 2" must not become the "from" value); the wider
+# pattern above is then searched only AFTER the split keyword, for the same reason.
+_SPLIT_FROM_TO = re.compile(
     r"from\s+rs\.?\s*(\d+(?:\.\d+)?)\s*/?-?\s*.*?to\s+rs\.?\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
+_SPLIT_KEYWORD = re.compile(r"split|sub-?\s*division", re.IGNORECASE)
+
+# A "bonus" that is not an equity bonus (debentures, preference shares, warrants, NCDs, bonds): the equity shares outstanding do
+# not change, so it must never carry a price factor. "bond" / "pref" match whole words only (not "Bondada", not "Prefecture").
+_NON_EQUITY_BONUS = re.compile(r"debenture|preference|warrant|\bpref\b|\bncds?\b|\bbonds?\b", re.IGNORECASE)
 
 # Rs./Re., optional missing space, decimal optional, "Per Sh"/"Per Share"/"Pr Shr" all accepted
 _DIVIDEND_RUPEE = re.compile(
@@ -73,20 +88,27 @@ def parse_subject(subject: str, face_val_at_record: str | None = None) -> Parsed
     if "bonus" in lower:
         m = _BONUS_RATIO.search(text)
         if m:
+            non_equity = _NON_EQUITY_BONUS.search(text) is not None
             return ParsedAction(
                 ActionType.BONUS, subject,
                 ratio_new=float(m.group(1)), ratio_old=float(m.group(2)),
-                parse_confidence="high",
+                parse_confidence="low" if non_equity else "high",
             )
         return ParsedAction(ActionType.BONUS, subject, parse_confidence="low")
 
     if "split" in lower or "sub-division" in lower or "subdivision" in lower:
-        m = _SPLIT_FACE_VALUE.search(text)
+        m = _SPLIT_FROM_TO.search(text)
+        if m is None:
+            k = _SPLIT_KEYWORD.search(text)
+            m = _SPLIT_FACE_VALUE.search(text, k.end()) if k else None
         if m:
+            fv_from, fv_to = float(m.group(1)), float(m.group(2))
+            # high only for two positive, different face values; anything else is never guessed into a factor
+            usable = fv_from > 0 and fv_to > 0 and fv_from != fv_to
             return ParsedAction(
                 ActionType.SPLIT, subject,
-                face_value_from=float(m.group(1)), face_value_to=float(m.group(2)),
-                parse_confidence="high",
+                face_value_from=fv_from, face_value_to=fv_to,
+                parse_confidence="high" if usable else "low",
             )
         return ParsedAction(ActionType.SPLIT, subject, parse_confidence="low")
 
