@@ -80,6 +80,7 @@ class Step:
     takes_range: bool = True
     weekend_pass: bool = True
     has_manifest: bool = True
+    range_chunks: bool = False      # stores <prefix>_<start>_<end>.parquet range chunks and refuses overlapping ranges
 
 
 STEPS = [
@@ -91,7 +92,7 @@ STEPS = [
     Step("price_band_hits", "data.ingest_price_band_hits"),
     Step("indices", "data.ingest_indices"),
     Step("fii_dii", "data.ingest_fii_dii", takes_range=False, weekend_pass=False, has_manifest=False),
-    Step("announcements", "data.ingest_announcements", weekend_pass=False),
+    Step("announcements", "data.ingest_announcements", weekend_pass=False, range_chunks=True),
 ]
 
 
@@ -248,6 +249,67 @@ def _run_downstream(args, start: date, today: date, timeout: int, rows: list, t0
     return rc_out
 
 
+# ------------------------------------------------------------------------------------------ range-chunk steps (R20-10)
+_CHUNK_RE = re.compile(r"^.+_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.parquet$")
+_OVERLAP_PREFIX = "partially overlaps existing"
+
+
+def chunk_files(step_name: str) -> list[tuple[date, date, str]]:
+    """(first date, last date, file name) of every <prefix>_<YYYY-MM-DD>_<YYYY-MM-DD>.parquet in the step's directory. Names that
+    do not parse (or whose dates are invalid or reversed) are ignored with a WARNING."""
+    found = []
+    for path in sorted(Path(DATA_DIRS[step_name]).glob("*.parquet")):
+        m = _CHUNK_RE.match(path.name)
+        try:
+            a, b = (date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))) if m else (None, None)
+        except ValueError:
+            a = b = None
+        if a is None or a > b:
+            logger.warning("step {}: ignoring {} (not a valid <prefix>_<start>_<end>.parquet chunk name)", step_name, path.name)
+            continue
+        found.append((a, b, path.name))
+    return found
+
+
+def effective_start(step: Step, start: date, today: date) -> tuple[date, date | None]:
+    """For a range-chunk step: the later of `start` and the day after the newest chunk's END (the ingester refuses a range that
+    partially overlaps a chunk). Returns (effective start, newest chunk end or None when no chunk parses)."""
+    chunks = chunk_files(step.name)
+    if not chunks:
+        return start, None
+    newest_end = max(b for _, b, _ in chunks)
+    return max(start, newest_end + timedelta(days=1)), newest_end
+
+
+def superseded_overlap(step: Step, key: str, error: str) -> list[str] | None:
+    """The covering file names when this `failed` record is an overlap refusal that the chunks on disk have since superseded, else
+    None. ALL must hold: a range-chunk step; error starts with "partially overlaps existing"; the key is a range a_b with valid
+    dates; every calendar day from a to b lies inside at least one chunk file on disk (so the refusal lost nothing)."""
+    if not step.range_chunks or not (error or "").startswith(_OVERLAP_PREFIX):
+        return None
+    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})", key)
+    if not m:
+        return None
+    try:
+        a, b = date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))
+    except ValueError:
+        return None
+    if a > b:
+        return None
+    chunks = chunk_files(step.name)
+    used: list[str] = []
+    day = a
+    while day <= b:
+        covering = [(fa, fb, name) for fa, fb, name in chunks if fa <= day <= fb]
+        if not covering:
+            return None
+        fa, fb, name = max(covering, key=lambda c: c[1])
+        if name not in used:
+            used.append(name)
+        day = fb + timedelta(days=1)
+    return used
+
+
 # ------------------------------------------------------------------------------------------ checks
 def newest_on_disk(directory: Path) -> date | None:
     """Newest date embedded in a *.parquet file name (the last date for range-named chunks)."""
@@ -255,7 +317,10 @@ def newest_on_disk(directory: Path) -> date | None:
     for path in Path(directory).glob("*.parquet"):
         found = _DATE_RE.findall(path.stem)
         if found:
-            d = date.fromisoformat(found[-1])
+            try:
+                d = date.fromisoformat(found[-1])
+            except ValueError:
+                continue        # a name with an impossible date (month 13...) is not a date on disk
             best = d if best is None or d > best else best
     return best
 
@@ -430,10 +495,22 @@ def _run(args) -> int:
 
     t0 = time.monotonic()
     rows: list[tuple[str, str, float]] = []
+    excusals: list[str] = []
     steps = [s for s in STEPS if args.only in (None, s.name)]
     for step in steps:
         began = time.monotonic()
-        for cmd in _commands(step, range_args):
+        step_range_args = range_args
+        if step.range_chunks:
+            eff_start, newest_end = effective_start(step, start, today)
+            if newest_end is not None and eff_start > start:
+                if eff_start > today - timedelta(days=1):
+                    logger.info("step {}: already current through {} (chunks on disk end there); no child run", step.name, newest_end)
+                    step_range_args = None
+                else:
+                    logger.info("step {}: chunks on disk end {}; starting at {} instead of {} (the ingester refuses a partly "
+                                "overlapping range)", step.name, newest_end, eff_start, start)
+                    step_range_args = ["--start", eff_start.isoformat()]
+        for cmd in ([] if step_range_args is None else _commands(step, step_range_args)):
             logger.info("step {}: {}", step.name, " ".join(cmd[1:]))
             try:
                 rc = subprocess.run(cmd, cwd=str(REPO_ROOT), timeout=timeout).returncode
@@ -452,10 +529,21 @@ def _run(args) -> int:
                             step.name, len(pending), pending)
                 failed = {k: e for k, e in failed.items() if k not in pending}
             equity_last = last_records(MANIFEST_DIR / "bhavcopy.jsonl") if failed else {}
-            excused = [k for k, e in failed.items() if is_expected_stale_reserve(step.name, k, e, equity_last)]
-            if excused:
+            stale_excused = [k for k, e in failed.items() if is_expected_stale_reserve(step.name, k, e, equity_last)]
+            if stale_excused:
                 logger.info("step {}: {} date(s) with an expected stale re-serve on a non-session (excused): {}",
-                            step.name, len(excused), excused)
+                            step.name, len(stale_excused), stale_excused)
+            overlap_excused = []
+            for k, e in failed.items():
+                if k in stale_excused:
+                    continue
+                covering = superseded_overlap(step, k, e)
+                if covering is not None:           # one valid excuse is enough
+                    overlap_excused.append(k)
+                    excusals.append(f"{step.name} {k}: overlap refusal superseded by chunks on disk ({', '.join(covering)})")
+                    logger.info("step {}: excused: overlap refusal superseded by chunks on disk: {} covered by {}",
+                                step.name, k, covering)
+            excused = stale_excused + overlap_excused
             bad = [k for k in failed if k not in excused]
             if bad:
                 logger.error("step {} FAILED: the manifest records `failed` for {} date(s) in {}..{} despite exit 0: {}",
@@ -467,6 +555,8 @@ def _run(args) -> int:
             _check_fii_dii(today)
         rows.append((step.name, "ok", time.monotonic() - began))
     logger.info("data refresh complete: {} step(s), no failed dates", len(steps))
+    for line in excusals:
+        logger.info("excused record: {}", line)
     if args.downstream:
         rc = _run_downstream(args, start, today, timeout, rows, t0)
         if rc != 0:
