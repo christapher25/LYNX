@@ -636,3 +636,310 @@ def test_round1_equity_manifest_is_read_once_per_step(fake, sandbox, monkeypatch
     monkeypatch.setattr(rdr, "last_records", lambda p: (reads.append(Path(p).name), real(p))[1])
     assert run_bhavdata(sandbox)[0] == 0
     assert reads.count("bhavcopy.jsonl") == 1
+
+
+# ================================================================================================
+# R20-9: --downstream = the rebuild chain after the ingesters, then the history guard
+# ================================================================================================
+import os  # noqa: E402
+
+DOWNSTREAM_ORDER = ["corporate_actions", "adjust_prices", "universe", "delivery", "pledging", "circuits", "fno", "flows",
+                    "breadth", "history_guard"]
+GUARD_ARGS = ["verify", "--skip-db", "--expected-changes", "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json",
+              "--expected-fills", "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json"]
+EXPECTED_CMDS = {                                          # step -> (module, args), exactly as the brief lists them
+    "corporate_actions": ("data.ingest_corporate_actions", ["--refresh-from", "2026-10-01"]),
+    "adjust_prices": ("data.adjust_prices", []),
+    "universe": ("data.build_universe", []),
+    "delivery": ("features.blocks.delivery", ["--no-resume", "--list-orphans-only"]),
+    "pledging": ("features.blocks.pledging", ["--no-resume", "--list-orphans-only"]),
+    "circuits": ("features.blocks.circuits", ["--no-resume", "--list-orphans-only"]),
+    "fno": ("features.blocks.fno", ["--no-resume", "--list-orphans-only"]),
+    "flows": ("features.blocks.flows", []),
+    "breadth": ("features.blocks.breadth", []),
+    "history_guard": ("scripts.history_guard", GUARD_ARGS),
+}
+ORPHAN = ("12:00:00 | WARNING | x:y:42 - data/processed/features/delivery: 3 orphan symbol file(s) not in the universe "
+          "(--list-orphans-only, NOT deleted): ['AAA', 'BBB', 'CCC']")
+
+
+class FakeChild:
+    """Replaces rdr._run_child. `fail`: module -> exit code; `output`: module -> list of output lines; `seq` shared with FakeRun."""
+
+    def __init__(self, fail=None, output=None, seq=None):
+        self.calls, self.fail, self.output = [], fail or {}, output or {}
+        self.seq = seq if seq is not None else []
+
+    def __call__(self, cmd, timeout):
+        module = cmd[2]
+        self.calls.append(list(cmd))
+        self.seq.append(("down", module))
+        return self.fail.get(module, 0), list(self.output.get(module, []))
+
+    def steps(self):
+        by_module = {m: s for s, (m, _) in EXPECTED_CMDS.items()}
+        return [by_module[c[2]] for c in self.calls]
+
+
+@pytest.fixture
+def chain(fake, sandbox, monkeypatch):
+    monkeypatch.setattr(rdr, "CHECKPOINT_PATH", sandbox / "data" / "processed" / "data_refresh_checkpoint.json")
+    seq = []
+    fake.hook = lambda cmd: seq.append(("ingest", cmd[2]))
+    child = FakeChild(seq=seq)
+    monkeypatch.setattr(rdr, "_run_child", child)
+    child.seq = seq
+    return child
+
+
+def ckpt(sandbox):
+    p = sandbox / "data" / "processed" / "data_refresh_checkpoint.json"
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
+# T1 -----------------------------------------------------------------------------------------------
+def test_t1_downstream_runs_a_to_j_in_order_with_exact_args_after_the_ingesters(chain):
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == DOWNSTREAM_ORDER
+    for cmd, step in zip(chain.calls, DOWNSTREAM_ORDER):
+        module, args = EXPECTED_CMDS[step]
+        assert cmd == [sys.executable, "-m", module, *args], step
+    kinds = [k for k, _ in chain.seq]
+    assert kinds == sorted(kinds, key=lambda k: k != "ingest")           # every ingester call comes before every downstream call
+    assert kinds.count("down") == 10 and kinds.count("ingest") > 0
+
+
+def test_t1_without_the_flag_no_downstream_step_runs(chain):
+    assert rdr.main(["--start", "2026-10-01"]) == 0
+    assert chain.calls == []
+
+
+def test_t1_corporate_actions_refresh_from_follows_a_days_range(chain):
+    assert rdr.main(["--downstream", "--days", "10"]) == 0
+    assert chain.calls[0][-2:] == ["--refresh-from", "2026-10-31"]       # TODAY (2026-11-10) minus 10 days
+
+
+def test_t1_children_are_argument_lists_never_a_shell(chain):
+    rdr.main(["--downstream", "--start", "2026-10-01"])
+    assert all(isinstance(c, list) and all(isinstance(a, str) for a in c) for c in chain.calls)
+    assert "shell=True" not in MODULE_SOURCE and "os.system" not in MODULE_SOURCE
+
+
+# T2 -----------------------------------------------------------------------------------------------
+def test_t2_failed_ingester_means_no_downstream(monkeypatch, sandbox):
+    monkeypatch.setattr(rdr, "CHECKPOINT_PATH", sandbox / "ck.json")
+    f = FakeRun(fail_on="data.ingest_fno_bhavcopy", code=7)
+    monkeypatch.setattr(rdr.subprocess, "run", f)
+    child = FakeChild()
+    monkeypatch.setattr(rdr, "_run_child", child)
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 7
+    assert child.calls == []
+
+
+def test_t2_manifest_failure_in_an_ingester_means_no_downstream(chain, sandbox):
+    write_manifest(sandbox, "bhavcopy", [("2026-11-09", "failed", "timeout")])
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) != 0
+    assert chain.calls == []
+
+
+# T3 -----------------------------------------------------------------------------------------------
+def test_t3_failed_step_stops_the_chain_and_a_rerun_resumes(chain, sandbox):
+    chain.fail = {"features.blocks.circuits": 3}
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 3
+    assert chain.steps() == DOWNSTREAM_ORDER[:6]                          # g..j never ran
+    assert ckpt(sandbox)["completed"] == DOWNSTREAM_ORDER[:5]             # a..e done, f not
+    chain.calls.clear()
+    chain.fail = {}
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == ["circuits", "fno", "flows", "breadth", "history_guard"]
+
+
+def test_t3_failure_names_the_step(chain):
+    chain.fail = {"data.adjust_prices": 5}
+    msgs, sink = capture("ERROR")
+    try:
+        rc = rdr.main(["--downstream", "--start", "2026-10-01"])
+    finally:
+        logger.remove(sink)
+    assert rc == 5 and any("adjust_prices" in m for m in msgs)
+    assert chain.steps() == ["corporate_actions", "adjust_prices"]
+
+
+# T4 -----------------------------------------------------------------------------------------------
+def test_t4_different_start_ignores_the_checkpoint(chain):
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    chain.calls.clear()
+    assert rdr.main(["--downstream", "--start", "2026-10-02"]) == 0
+    assert chain.steps() == DOWNSTREAM_ORDER
+
+
+def test_t4_restart_downstream_ignores_the_checkpoint(chain):
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    chain.calls.clear()
+    assert rdr.main(["--downstream", "--restart-downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == DOWNSTREAM_ORDER
+
+
+def test_t4_same_key_second_run_skips_the_rebuild_but_not_the_guard(chain):
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    chain.calls.clear()
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == ["history_guard"]
+
+
+def test_t4_a_new_day_is_a_new_key(chain, monkeypatch):
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    chain.calls.clear()
+    monkeypatch.setattr(rdr, "_today", lambda: date(2026, 11, 11))
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == DOWNSTREAM_ORDER
+
+
+# T5 -----------------------------------------------------------------------------------------------
+def test_t5_guard_runs_even_when_the_checkpoint_lists_it(chain, sandbox):
+    (sandbox / "data" / "processed").mkdir(parents=True, exist_ok=True)
+    rdr.CHECKPOINT_PATH.write_text(json.dumps({"key": {"start": "2026-10-01", "today": "2026-11-10"},
+                                               "completed": DOWNSTREAM_ORDER}), encoding="utf-8")
+    assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    assert chain.steps() == ["history_guard"]
+
+
+def test_t5_guard_failure_is_a_non_zero_exit_with_a_clear_message(chain):
+    chain.fail = {"scripts.history_guard": 1}
+    msgs, sink = capture("ERROR")
+    try:
+        rc = rdr.main(["--downstream", "--start", "2026-10-01"])
+    finally:
+        logger.remove(sink)
+    assert rc == 1
+    assert any("history guard FAILED: stop, do not use the rebuilt data until the owner decides" in m for m in msgs)
+
+
+def test_t5_guard_is_never_recorded_as_completed(chain, sandbox):
+    rdr.main(["--downstream", "--start", "2026-10-01"])
+    assert "history_guard" not in ckpt(sandbox)["completed"]
+
+
+# T6 -----------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("module", ["delivery", "pledging", "circuits", "fno"])
+def test_t6_every_per_symbol_block_carries_list_orphans_only(chain, module):
+    rdr.main(["--downstream", "--start", "2026-10-01"])
+    cmd = [c for c in chain.calls if c[2] == f"features.blocks.{module}"][0]
+    assert "--list-orphans-only" in cmd and "--no-resume" in cmd
+
+
+def test_t6_no_per_symbol_block_command_can_be_built_without_the_flag():
+    cmds = rdr.downstream_commands(date(2026, 10, 1))
+    blocks = [c for _, c in cmds if c[2].split(".")[-1] in {"delivery", "pledging", "circuits", "fno"}
+              and c[2].startswith("features.blocks.")]
+    assert len(blocks) == 4 and all("--list-orphans-only" in c for c in blocks)
+    assert not any("--prune" in " ".join(c) or "--delete" in " ".join(c) for _, c in cmds)
+
+
+# T7 -----------------------------------------------------------------------------------------------
+def test_t7_only_with_downstream_is_a_usage_error(fake, chain):
+    with pytest.raises(SystemExit) as e:
+        rdr.main(["--only", "bhavcopy", "--downstream"])
+    assert e.value.code == 2
+    assert fake.calls == [] and chain.calls == []
+
+
+def test_t7_restart_downstream_needs_downstream(fake, chain):
+    with pytest.raises(SystemExit) as e:
+        rdr.main(["--restart-downstream"])
+    assert e.value.code == 2 and chain.calls == []
+
+
+# T8 -----------------------------------------------------------------------------------------------
+def _summary_tail(msgs):
+    text = "\n".join(msgs)
+    assert "summary" in text
+    return text[text.rindex("summary") - 1:]
+
+
+def test_t8_orphan_lines_and_the_guard_line_appear_in_the_summary(chain):
+    chain.output = {"features.blocks.delivery": ["something", ORPHAN],
+                    "features.blocks.circuits": [ORPHAN.replace("delivery", "circuits").replace("3 orphan", "7 orphan")],
+                    "scripts.history_guard": ["noise", "history guard: verified 12 datasets, 0 differences"]}
+    msgs, sink = capture("INFO")
+    try:
+        assert rdr.main(["--downstream", "--start", "2026-10-01"]) == 0
+    finally:
+        logger.remove(sink)
+    tail = _summary_tail(msgs)
+    assert "3 orphan symbol file(s)" in tail and "7 orphan symbol file(s)" in tail
+    assert "history guard: verified 12 datasets, 0 differences" in tail
+
+
+def test_t8_summary_lists_status_and_seconds_per_step(chain):
+    msgs, sink = capture("INFO")
+    try:
+        rdr.main(["--downstream", "--start", "2026-10-01"])
+    finally:
+        logger.remove(sink)
+    tail = _summary_tail(msgs)
+    for step in DOWNSTREAM_ORDER:
+        assert step in tail
+    assert "ok" in tail and "total" in tail.lower()
+
+
+def test_t8_the_wrapper_deletes_nothing():
+    assert "unlink(" not in MODULE_SOURCE and "rmtree" not in MODULE_SOURCE
+    assert "os.remove" not in MODULE_SOURCE
+
+
+# T9 -----------------------------------------------------------------------------------------------
+def test_t9_checkpoint_is_written_atomically(chain, sandbox, monkeypatch):
+    real = os.replace
+    n = {"i": 0}
+
+    def flaky(src, dst):
+        n["i"] += 1
+        if n["i"] == 2:
+            raise OSError("crash between steps")
+        return real(src, dst)
+
+    monkeypatch.setattr(rdr.os, "replace", flaky)
+    rdr.main(["--downstream", "--start", "2026-10-01"])
+    data = ckpt(sandbox)                                                  # a valid file, holding the steps before the crash
+    assert data["completed"][0] == "corporate_actions"
+    assert not list((sandbox / "data" / "processed").glob("*.tmp"))        # no half-written leftover
+
+
+def test_t9_checkpoint_holds_the_run_key(chain, sandbox):
+    rdr.main(["--downstream", "--start", "2026-10-01"])
+    assert ckpt(sandbox)["key"] == {"start": "2026-10-01", "today": "2026-11-10"}
+
+
+def test_child_timeout_exits_124_and_names_the_step(chain, monkeypatch):
+    monkeypatch.setattr(rdr, "_run_child", lambda cmd, timeout: (124, []))
+    msgs, sink = capture("ERROR")
+    try:
+        rc = rdr.main(["--downstream", "--start", "2026-10-01"])
+    finally:
+        logger.remove(sink)
+    assert rc == 124 and any("corporate_actions" in m for m in msgs)
+
+
+# the real child runner, on tiny harmless python children (no pipeline is run) ------------------------------------
+def test_run_child_keeps_orphan_lines_the_last_line_and_the_exit_code():
+    code = ("import sys\n"
+            "print('progress 1')\n"
+            "print(" + repr(ORPHAN) + ")\n"
+            "print('progress 2', file=sys.stderr)\n"
+            "print('verdict: ok')\n"
+            "sys.exit(0)\n")
+    rc, kept = rdr._run_child([sys.executable, "-c", code], 30)
+    assert rc == 0
+    assert kept[0] == ORPHAN and kept[-1] == "verdict: ok"
+    assert "progress 1" not in kept
+
+
+def test_run_child_passes_a_non_zero_exit_code_through():
+    rc, kept = rdr._run_child([sys.executable, "-c", "import sys; print('boom'); sys.exit(3)"], 30)
+    assert rc == 3 and kept[-1] == "boom"
+
+
+def test_run_child_timeout_kills_the_child_and_returns_124():
+    rc, _ = rdr._run_child([sys.executable, "-c", "import time; time.sleep(60)"], 1)
+    assert rc == 124
