@@ -249,7 +249,9 @@ def snapshot(cutoff: str, src: Sources, force: bool = False) -> list[str]:
 class Report:
     failures: list[str] = field(default_factory=list)
     allowed: list[str] = field(default_factory=list)
-    kinds: dict[str, int] = field(default_factory=lambda: {"new-action adjusted": 0, "empty-column type": 0, "owner-approved": 0})
+    kinds: dict[str, int] = field(default_factory=lambda: {"new-action adjusted": 0, "empty-column type": 0, "owner-approved": 0,
+                                                           "owner-approved late fill": 0})
+    exempt: list[str] = field(default_factory=list)
 
     def allow(self, kind: str, line: str) -> None:
         self.allowed.append(line)
@@ -378,7 +380,79 @@ def _remove_expected(path: Path, cutoff: pd.Timestamp, entries: list[dict], repo
     return _digest_frame(frame, col, track_all_null=True) if len(frame) else None
 
 
-def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, expected: dict | None = None) -> Report:
+def load_fills(path: Path | str) -> dict:
+    """Parse and validate an --expected-fills file (owner-approved late fills of per-symbol feature datasets). ValueError if malformed."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"cannot read expected-fills file {path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("history_cutoff"), str) or not isinstance(data.get("fills"), list):
+        raise ValueError("expected-fills file needs a string history_cutoff and a list fills")
+    fills = []
+    for i, f in enumerate(data["fills"]):
+        if not isinstance(f, dict) or not {"dataset", "dates", "missing_values"} <= set(f):
+            raise ValueError(f"expected-fills entry #{i} needs dataset, dates, missing_values")
+        if not isinstance(f["dataset"], str) or not f["dataset"].startswith("features_"):
+            raise ValueError(f"expected-fills entry #{i}: only per-symbol features_* datasets are accepted, got {f['dataset']!r}")
+        if not isinstance(f["dates"], list) or not f["dates"]:
+            raise ValueError(f"expected-fills entry #{i}: dates must be a non-empty list")
+        try:
+            dates = [pd.Timestamp(d).normalize() for d in f["dates"]]
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"expected-fills entry #{i}: bad date in {f['dates']!r}") from exc
+        mv = f["missing_values"]
+        if not isinstance(mv, dict) or not mv or not all(isinstance(k, str) for k in mv):
+            raise ValueError(f"expected-fills entry #{i}: missing_values must be a non-empty object")
+        for k, v in mv.items():
+            if v is not None and not isinstance(v, (bool, int, float)):
+                raise ValueError(f"expected-fills entry #{i}: missing value of {k!r} must be null, a boolean or a number")
+        fills.append({"dataset": f["dataset"], "dates": dates, "missing_values": dict(mv)})
+    return {"history_cutoff": data["history_cutoff"], "fills": fills}
+
+
+def _late_fill_unit(path: Path, cutoff: pd.Timestamp, fill: dict) -> tuple[dict, list[str]] | None:
+    """The unit of the file's history rows after resetting the admitted columns, on the admitted dates only, to the value they held
+    when the row was missing. None if a value cannot be put into a column (the unit then fails as before)."""
+    frame, col = _history(pd.read_parquet(path), cutoff)
+    if col is None:
+        return None
+    frame = frame.copy()
+    mask = pd.to_datetime(frame[col]).dt.normalize().isin(fill["dates"])
+    present = sorted({str(d.date()) for d in pd.to_datetime(frame.loc[mask, col]).dt.normalize()})
+    try:
+        for name, value in fill["missing_values"].items():
+            if name in frame.columns:
+                frame.loc[mask, name] = value
+    except (TypeError, ValueError):
+        return None
+    return _digest_frame(frame, col), present
+
+
+def _compare_late_fill(name: str, key: str, old, new, path: Path, cutoff: str, fill: dict, adj_cols, report: Report) -> None:
+    """A unit of a listed dataset: untouched if it does not differ; ALLOWED only if masking the admitted columns on the admitted
+    dates reproduces the snapshot unit in every respect (rows, keys, column set, every column digest); otherwise it fails as today."""
+    plain = Report()
+    _compare_units(name, key, old, new, set(), adj_cols, plain)
+    if not plain.failures:
+        return
+    if old is None or new is None:
+        report.failures.extend(plain.failures)
+        return
+    masked = _late_fill_unit(path, pd.Timestamp(cutoff), fill)
+    if masked is None:
+        report.failures.extend(plain.failures)
+        return
+    after = Report()
+    _compare_units(name, key, old, masked[0], set(), adj_cols, after)
+    if after.failures:
+        report.failures.extend(f"{f} (after masking the owner-approved late fill)" for f in after.failures)
+        return
+    differed = sorted(c for c in old["columns"] if old["columns"][c] != new["columns"].get(c))
+    report.allow("owner-approved late fill", f"{name}:{key}: owner-approved late fill on {masked[1]}; column(s) {differed}")
+
+
+def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, expected: dict | None = None,
+           fills: dict | None = None, exempt: list[str] | None = None) -> Report:
     """Recompute and compare. Fails if the index is missing, if any indexed dataset has no snapshot file or cannot be
     enumerated now, or if a dataset exists now that the index does not list. indicators may only be absent when the index says
     it was skipped AND skip_db is set."""
@@ -404,6 +478,25 @@ def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, e
             report.failures.append(f"{n}: in the snapshot index but cannot be enumerated now (missing directory or reader){hint}")
         elif n in indexed and not (src.out_dir / f"{n}.json").exists():
             report.failures.append(f"{n}: snapshot file {n}.json is missing")
+    exempt_ok: set[str] = set()
+    for n in exempt or []:
+        if not n.startswith("features_"):
+            report.failures.append(f"--exempt-dataset {n}: only per-symbol features_* datasets can be exempted")
+        elif n not in indexed:
+            report.failures.append(f"--exempt-dataset {n}: not in the snapshot index")
+        else:
+            exempt_ok.add(n)
+    report.exempt = sorted(exempt_ok)
+    fills_by_ds: dict[str, dict] = {}
+    if fills is not None:
+        if fills["history_cutoff"] != index["cutoff"]:
+            report.failures.append(f"expected-fills history_cutoff {fills['history_cutoff']} differs from the snapshot cutoff {index['cutoff']}")
+            return report
+        for f in fills["fills"]:
+            if f["dataset"] not in indexed or f["dataset"] not in names:
+                report.failures.append(f"expected-fills dataset {f['dataset']} is not in the snapshot or is not being verified")
+            else:
+                fills_by_ds[f["dataset"]] = f
     adj_cols = adjusted_columns()
     new_actions = new_action_symbols(src.actions_dir, pd.Timestamp(index["cutoff"]))
     by_symbol: dict[str, list[dict]] = {}
@@ -421,7 +514,7 @@ def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, e
                 approved_adj.add(e["symbol"])
     for name in names:
         path = src.out_dir / f"{name}.json"
-        if name not in indexed or name not in now_names or not path.exists():
+        if name not in indexed or name not in now_names or not path.exists() or name in exempt_ok:
             continue
         snap = json.loads(path.read_text(encoding="utf-8"))
         cutoff = snap["cutoff"]
@@ -447,7 +540,13 @@ def verify(src: Sources, only: list[str] | None = None, skip_db: bool = False, e
                     report.allow("owner-approved", f"corporate_actions:{sym}: {len(entries)} owner-approved action(s) added: "
                                  + "; ".join(_describe(e) for e in entries))
         for key in sorted(set(snap["units"]) | set(now)):
-            if key not in skip:
+            if key in skip:
+                continue
+            if name in fills_by_ds:
+                _compare_late_fill(name, key, snap["units"].get(key), now.get(key),
+                                   src.features_dir / name[len("features_"):] / f"{key}.parquet", cutoff, fills_by_ds[name],
+                                   adj_cols, report)
+            else:
                 _compare_units(name, key, snap["units"].get(key), now.get(key), new_actions, adj_cols, report, approved_adj)
         logger.info("verified {} against snapshot (cutoff {})", name, cutoff)
     return report
@@ -465,6 +564,9 @@ def main(argv=None, sources: Sources | None = None) -> int:
     v.add_argument("--only", nargs="*", help="dataset names to verify (default: every indexed dataset)")
     v.add_argument("--skip-db", action="store_true", help="valid only if the snapshot was also made with --skip-db")
     v.add_argument("--expected-changes", metavar="PATH", help="JSON of owner-approved corporate actions added before the cutoff")
+    v.add_argument("--expected-fills", metavar="PATH", help="JSON of owner-approved late fills of per-symbol feature datasets")
+    v.add_argument("--exempt-dataset", action="append", default=[], metavar="NAME",
+                   help="features_* dataset not verified in this run (one-time owner exemption; repeatable)")
     args = parser.parse_args(argv)
 
     src = sources if sources is not None else default_sources(skip_db=getattr(args, "skip_db", False))
@@ -484,13 +586,30 @@ def main(argv=None, sources: Sources | None = None) -> int:
             logger.error("FAIL {}", exc)
             logger.error("history guard FAILED: expected-changes file rejected, nothing verified")
             return 1
-    report = verify(src, args.only, skip_db=args.skip_db, expected=expected)
+    fills = None
+    if args.expected_fills:
+        try:
+            fills = load_fills(args.expected_fills)
+        except ValueError as exc:
+            logger.error("FAIL {}", exc)
+            logger.error("history guard FAILED: expected-fills file rejected, nothing verified")
+            return 1
+    bad_exempt = [n for n in args.exempt_dataset if not n.startswith("features_")]
+    if bad_exempt:
+        logger.error("FAIL --exempt-dataset accepts only features_* datasets, got {}", bad_exempt)
+        logger.error("history guard FAILED: exemption rejected, nothing verified")
+        return 1
+    report = verify(src, args.only, skip_db=args.skip_db, expected=expected, fills=fills, exempt=args.exempt_dataset)
+    for name in report.exempt:
+        logger.warning("EXEMPT {}: not verified in this run (owner-approved one-time exemption)", name)
     for line in report.allowed:
         logger.warning("ALLOWED {}", line)
     for line in report.failures:
         logger.error("FAIL {}", line)
-    logger.info("ALLOWED counts: new-action adjusted={} empty-column type={} owner-approved={}",
-                report.kinds["new-action adjusted"], report.kinds["empty-column type"], report.kinds["owner-approved"])
+    logger.info("ALLOWED counts: new-action adjusted={} empty-column type={} owner-approved={} late fill={}",
+                report.kinds["new-action adjusted"], report.kinds["empty-column type"], report.kinds["owner-approved"],
+                report.kinds["owner-approved late fill"])
+    logger.info("exempt datasets={}", len(report.exempt))
     if report.failures:
         logger.error("history guard FAILED: {} difference(s), {} allowed", len(report.failures), len(report.allowed))
         return 1
