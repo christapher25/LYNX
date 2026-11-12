@@ -44,6 +44,9 @@ def read_breadth(path) -> pd.DataFrame:
         raise CompareError(f"{path}: missing columns {missing}")
     df = df[["date", *VALUE_COLS]].copy()
     df["date"] = pd.to_datetime(df["date"]).astype("datetime64[ns]")
+    if df["date"].isna().any():
+        # a NaT date compares False with everything, so such a row could never trip the STOP rule: the gate must not fail open
+        raise CompareError(f"{path}: {int(df['date'].isna().sum())} row(s) with a missing (NaT) date")
     if df["date"].duplicated().any():
         raise CompareError(f"{path}: duplicate dates {df.loc[df['date'].duplicated(), 'date'].dt.date.tolist()[:5]}")
     return df.sort_values("date").reset_index(drop=True)
@@ -125,6 +128,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     try:
         old, new = read_breadth(a.old), read_breadth(a.new)
+        if old.empty:
+            # no old rows means no old last date: every comparison would be False and the gate would pass on nothing
+            raise CompareError(f"{a.old}: the old file has no rows, so there is nothing to compare against")
     except CompareError as e:
         logger.error("{}", e)
         return 2

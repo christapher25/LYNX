@@ -185,3 +185,29 @@ def test_dates_compare_across_datetime_units(tmp_path):
 def test_source_conventions():
     src = open(cb.__file__, encoding="utf-8").read()
     assert "print(" not in src and "isclose" not in src and "unlink" not in src
+
+
+# Round 1 (tester): the STOP gate must not fail open --------------------------------------------------------------
+def test_round1_nat_date_row_in_new_file_exits_2_and_writes_nothing(tmp_path):
+    new = frame(BASE)
+    new.loc[len(new)] = [pd.NaT, 1.0, 1.0, False]
+    code, out = run(tmp_path, frame(BASE), new)
+    assert code == 2 and not out.exists() and not out.with_suffix(".csv").exists()
+
+
+def test_round1_nat_date_row_in_old_file_exits_2(tmp_path):
+    old = frame(BASE)
+    old.loc[len(old)] = [pd.NaT, 1.0, 1.0, False]
+    code, out = run(tmp_path, old, frame(BASE))
+    assert code == 2 and not out.exists()
+
+
+def test_round1_empty_old_file_exits_2_not_a_silent_pass(tmp_path):
+    code, out = run(tmp_path, frame(BASE).iloc[0:0], frame(BASE))
+    assert code == 2 and not out.exists()
+
+
+def test_round1_empty_new_file_is_every_old_date_removed_and_stops(tmp_path):
+    code, out = run(tmp_path, frame(BASE), frame(BASE).iloc[0:0])
+    assert code == 1
+    assert text(out).splitlines()[0].startswith("HISTORY DIFFERENCES: 3 (STOP)")
