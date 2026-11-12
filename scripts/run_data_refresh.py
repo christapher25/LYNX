@@ -1,6 +1,7 @@
 """Data catch-up wrapper: run the existing ingesters strictly one at a time.
 
     python -m scripts.run_data_refresh [--only STEP] [--start YYYY-MM-DD | --days N] [--step-timeout-hours H]
+                                       [--downstream [--restart-downstream]]
 
 Each step is `sys.executable -m <module>` with the same date range. Steps 1-7 run a weekday pass and then a --weekends
 pass over that range. The ingesters skip dates they already hold, so the wrapper keeps no state and a rerun is safe. It
@@ -19,6 +20,15 @@ the day is lost for good, so the wrapper logs a WARNING when there is no capture
 (N days, yesterday inclusive), whereas the other ingesters count back from today. The wrapper passes the same flag to all
 of them; today's announcements are therefore picked up by the next day's run.
 
+--downstream (R20-9): after ALL ingester steps have passed their checks, run the rebuild chain one child at a time and stop at the
+first non-zero exit (the wrapper exits with that code): corporate-actions refresh (--refresh-from = the --start date), adjust_prices,
+build_universe, the per-symbol feature blocks delivery / pledging / circuits / fno (always with --no-resume --list-orphans-only:
+orphans are LISTED, never deleted), flows, breadth, and last the history guard (verify, owner-approved expected changes and fills).
+A checkpoint (data/processed/data_refresh_checkpoint.json: run key = start date + today, completed step names) lets a rerun with
+the same key skip completed downstream steps; the guard is never skipped. --restart-downstream ignores the checkpoint. The final
+summary repeats every orphan line the children printed, per-step status and seconds, newest-on-disk per source and the guard's
+last line. The wrapper deletes nothing. --downstream cannot be combined with --only.
+
 No point-in-time store step is included (pending a user decision). Logs go to the console and to
 LOG_DIR/data_refresh_<timestamp>.log so a detached run leaves a record.
 """
@@ -26,9 +36,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -38,7 +51,7 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import (ANNOUNCEMENTS_DIR, BHAVCOPY_DIR, DELIVERY_DIR, FII_DII_DIR, FNO_BAN_DIR, FNO_BHAVCOPY_DIR,  # noqa: E402
-                    LOG_DIR, MANIFEST_DIR, PRICE_BAND_HITS_DIR, RAW_DATA_DIR, SEC_LIST_DIR)
+                    LOG_DIR, MANIFEST_DIR, PRICE_BAND_HITS_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, SEC_LIST_DIR)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DAYS = 21
@@ -94,6 +107,145 @@ def _commands(step: Step, range_args: list[str]) -> list[list[str]]:
     if step.weekend_pass:
         cmds.append(base + range_args + ["--weekends"])
     return cmds
+
+
+# ------------------------------------------------------------------------------------------ downstream chain (R20-9)
+GUARD_STEP = "history_guard"
+GUARD_CORRECTIONS = "docs/agent-team/corrections/2026-11-10_precutoff_corporate_actions.json"
+GUARD_FILLS = "docs/agent-team/corrections/2026-11-12_guard_expected_fills.json"
+CHECKPOINT_PATH = PROCESSED_DATA_DIR / "data_refresh_checkpoint.json"
+ORPHAN_RE = re.compile(r"orphan symbol file\(s\).*NOT deleted")
+
+
+def _per_symbol_block(module: str) -> list[str]:
+    """The ONLY way this wrapper builds a per-symbol feature block command: orphans are listed, never deleted."""
+    return [sys.executable, "-m", module, "--no-resume", "--list-orphans-only"]
+
+
+def downstream_commands(start: date) -> list[tuple[str, list[str]]]:
+    """The rebuild chain, in order, as (step name, argument list). Never run through a shell."""
+    py = [sys.executable, "-m"]
+    return [
+        ("corporate_actions", py + ["data.ingest_corporate_actions", "--refresh-from", start.isoformat()]),
+        ("adjust_prices", py + ["data.adjust_prices"]),
+        ("universe", py + ["data.build_universe"]),
+        ("delivery", _per_symbol_block("features.blocks.delivery")),
+        ("pledging", _per_symbol_block("features.blocks.pledging")),
+        ("circuits", _per_symbol_block("features.blocks.circuits")),
+        ("fno", _per_symbol_block("features.blocks.fno")),
+        ("flows", py + ["features.blocks.flows"]),
+        ("breadth", py + ["features.blocks.breadth"]),
+        (GUARD_STEP, py + ["scripts.history_guard", "verify", "--skip-db",
+                           "--expected-changes", GUARD_CORRECTIONS, "--expected-fills", GUARD_FILLS]),
+    ]
+
+
+def _run_child(cmd: list[str], timeout: int) -> tuple[int, list[str]]:
+    """Run one downstream child, relay its output line by line to the log, and return (exit code, kept lines). Kept lines are the
+    orphan lines plus the last non-empty line (the guard's verdict); exit code 124 on timeout."""
+    kept: list[str] = []
+    last = ""
+    proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace")
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        proc.kill()
+
+    timer = threading.Timer(timeout, _kill)
+    timer.start()
+    try:
+        for raw in proc.stdout:
+            line = raw.rstrip("\r\n")
+            logger.info("  | {}", line)
+            if ORPHAN_RE.search(line):
+                kept.append(line)
+            if line.strip():
+                last = line
+        proc.wait()
+    finally:
+        timer.cancel()
+    if last:
+        kept.append(last)
+    return (124 if timed_out.is_set() else proc.returncode), kept
+
+
+def _read_checkpoint(key: dict) -> list[str]:
+    try:
+        data = json.loads(Path(CHECKPOINT_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    done = data.get("completed") if isinstance(data, dict) and data.get("key") == key else None
+    return [s for s in done if isinstance(s, str)] if isinstance(done, list) else []
+
+
+def _write_checkpoint(key: dict, completed: list[str]) -> None:
+    """Atomic (tmp + os.replace): a crash leaves the previous valid file. A failed write is a warning, not a failed step. The fixed
+    temp name is simply overwritten (and consumed by the replace) by the next write; this module deletes nothing."""
+    path = Path(CHECKPOINT_PATH)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps({"key": key, "completed": completed}, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning("could not write the downstream checkpoint {}: {} (a rerun will redo steps)", path.name, e)
+
+
+def _log_wrapup(rows: list[tuple[str, str, float]], orphans: list[str], guard_line: str, total: float) -> None:
+    logger.info("data refresh summary (step, status, seconds):")
+    for name, status, secs in rows:
+        logger.info("  {:<18} {:<22} {:>8.1f}", name, status, secs)
+    logger.info("  total time {:.1f}s", total)
+    newest = {n: (str(newest_on_disk(d)) if d is not None else "none") for n, d in DATA_DIRS.items()}
+    logger.info("  newest on disk: {}", newest)
+    if orphans:
+        logger.warning("  orphan lines reported by the children (listed, NOT deleted; {}):", len(orphans))
+        for line in orphans:
+            logger.warning("    {}", line)
+    else:
+        logger.info("  no orphan lines reported")
+    if guard_line:
+        logger.info("  guard last line: {}", guard_line)
+
+
+def _run_downstream(args, start: date, today: date, timeout: int, rows: list, t0: float) -> int:
+    key = {"start": start.isoformat(), "today": today.isoformat()}
+    completed = [] if args.restart_downstream else _read_checkpoint(key)
+    if completed:
+        logger.info("downstream checkpoint found for {}: skipping {}", key, completed)
+    orphans: list[str] = []
+    guard_line = ""
+    rc_out = 0
+    for name, cmd in downstream_commands(start):
+        if name != GUARD_STEP and name in completed:
+            rows.append((name, "skipped (checkpoint)", 0.0))
+            continue
+        logger.info("downstream step {}: {}", name, " ".join(cmd[1:]))
+        began = time.monotonic()
+        rc, lines = _run_child(cmd, timeout)
+        secs = time.monotonic() - began
+        orphans += [ln for ln in lines if ORPHAN_RE.search(ln)]
+        last = next((ln for ln in reversed(lines) if ln.strip()), "")
+        if name == GUARD_STEP:
+            guard_line = last
+        if rc != 0:
+            rows.append((name, f"FAILED (exit {rc})", secs))
+            if name == GUARD_STEP:
+                logger.error("history guard FAILED: stop, do not use the rebuilt data until the owner decides (exit {})", rc)
+            elif rc == 124:
+                logger.error("downstream step {} FAILED: timed out after {}s: {}", name, timeout, " ".join(cmd[1:]))
+            else:
+                logger.error("downstream step {} FAILED with exit code {}: {}", name, rc, " ".join(cmd[1:]))
+            rc_out = rc
+            break
+        rows.append((name, "ok", secs))
+        if name != GUARD_STEP:
+            completed.append(name)
+            _write_checkpoint(key, completed)
+    _log_wrapup(rows, orphans, guard_line, time.monotonic() - t0)
+    return rc_out
 
 
 # ------------------------------------------------------------------------------------------ checks
@@ -253,7 +405,17 @@ def _parse(argv):
     g.add_argument("--days", type=_positive_int, help=f"last N days (default {DEFAULT_DAYS})")
     p.add_argument("--step-timeout-hours", type=_positive_float, default=DEFAULT_STEP_TIMEOUT_HOURS,
                    help="kill a single ingester process after this long (default 2)")
-    return p.parse_args(argv)
+    p.add_argument("--downstream", action="store_true",
+                   help="after the ingesters: corporate-actions refresh, adjust_prices, universe, feature blocks (orphans listed, "
+                        "never deleted), flows, breadth, then the history guard; resumable through a checkpoint")
+    p.add_argument("--restart-downstream", action="store_true",
+                   help="with --downstream: ignore the downstream checkpoint and start the chain from the first step")
+    args = p.parse_args(argv)
+    if args.downstream and args.only:
+        p.error("--downstream cannot be combined with --only")
+    if args.restart_downstream and not args.downstream:
+        p.error("--restart-downstream is only valid together with --downstream")
+    return args
 
 
 # ------------------------------------------------------------------------------------------ run
@@ -266,8 +428,11 @@ def _run(args) -> int:
         range_args, start = ["--days", str(days)], today - timedelta(days=days)
     timeout = int(args.step_timeout_hours * 3600)
 
+    t0 = time.monotonic()
+    rows: list[tuple[str, str, float]] = []
     steps = [s for s in STEPS if args.only in (None, s.name)]
     for step in steps:
+        began = time.monotonic()
         for cmd in _commands(step, range_args):
             logger.info("step {}: {}", step.name, " ".join(cmd[1:]))
             try:
@@ -300,7 +465,13 @@ def _run(args) -> int:
         _currency(step)
         if step.name == "fii_dii":
             _check_fii_dii(today)
+        rows.append((step.name, "ok", time.monotonic() - began))
     logger.info("data refresh complete: {} step(s), no failed dates", len(steps))
+    if args.downstream:
+        rc = _run_downstream(args, start, today, timeout, rows, t0)
+        if rc != 0:
+            return rc
+        logger.info("data refresh with downstream chain complete: {} ingester step(s) and the history guard passed", len(steps))
     return 0
 
 
