@@ -9,7 +9,8 @@ proposed change when the factor differs: `gain` (none -> value), `lose` (value -
 after round(.., 12)). Rows with an unchanged factor are only counted (and, separately, how many of them differ in another parsed
 field). Each proposed change carries price evidence from the symbol's adjusted file (unadjusted CLOSE): the last session strictly
 before the ex-date, the first session on or after it, their ratio, and a `check`. The check only sorts the list for the owner's
-reading (CHECK_BAND); it approves or rejects nothing.
+reading (CHECK_BAND); it approves or rejects nothing. `combined_factor` is the product of the NEW factors of all of the symbol's rows on the same
+ex-date (a split and a bonus on one day move the price together) and `check_combined` applies the same band to that product.
 
 Outputs, under --out-dir only: proposed_changes.json and proposed_changes.md. Nothing else is written; the data directories
 are only read. Exit 0 whenever the run completes; exit 1 on an unreadable file or a duplicate (symbol, ex_date, raw_subject) key,
@@ -91,9 +92,21 @@ def _kind(old: float | None, new: float | None) -> str | None:
     return None if round(old, 12) == round(new, 12) else "change"
 
 
-def _evidence(prices: pd.DataFrame | None, ex_date: pd.Timestamp, kind: str, old, new) -> dict:
+def _finite(v) -> bool:
+    return v is not None and math.isfinite(v)
+
+
+def _in_band(ratio: float, factor: float | None) -> bool:
+    """factor None (nothing on the day carries a new factor) is compared with 1."""
+    return abs(ratio / (1.0 if factor is None else factor) - 1) <= CHECK_BAND
+
+
+def _evidence(prices: pd.DataFrame | None, ex_date: pd.Timestamp, kind: str, old, new, combined) -> dict:
     out = {"check": "no_price", "no_price_reason": None, "observed_ratio": None, "prev_date": None, "prev_close": None,
-           "ex_session_date": None, "ex_close": None}
+           "ex_session_date": None, "ex_close": None, "check_combined": "no_price"}
+    if kind != "lose" and not (_finite(new) and new > 0):
+        out["no_price_reason"] = "bad_factor"
+        return out
     if prices is None:
         out["no_price_reason"] = "no_adjusted_file"
         return out
@@ -112,20 +125,22 @@ def _evidence(prices: pd.DataFrame | None, ex_date: pd.Timestamp, kind: str, old
         return out
     prev_date, ex_session = pd.Timestamp(dates[prev_idx]), pd.Timestamp(dates[ex_idx])
     prev_close, ex_close = float(prices["CLOSE"].iloc[prev_idx]), float(prices["CLOSE"].iloc[ex_idx])
-    out.update(prev_date=str(prev_date.date()), prev_close=prev_close, ex_session_date=str(ex_session.date()), ex_close=ex_close)
+    out.update(prev_date=str(prev_date.date()), prev_close=prev_close if math.isfinite(prev_close) else None,
+               ex_session_date=str(ex_session.date()), ex_close=ex_close if math.isfinite(ex_close) else None)
     if (ex_session - prev_date).days > MAX_GAP_DAYS:
         out["no_price_reason"] = "gap_gt_10_days"
         return out
-    if not (prev_close > 0) or math.isnan(ex_close):
+    if not (math.isfinite(prev_close) and prev_close > 0 and math.isfinite(ex_close)):
         out["no_price_reason"] = "bad_close"
         return out
     ratio = ex_close / prev_close
+    if not math.isfinite(ratio):
+        out["no_price_reason"] = "bad_close"
+        return out
     out["observed_ratio"] = ratio
-    if kind == "lose":
-        ok = abs(ratio - 1) <= CHECK_BAND
-    else:
-        ok = abs(ratio / new - 1) <= CHECK_BAND
-    out["check"] = "consistent" if ok else "inconsistent"
+    out["check"] = "consistent" if (abs(ratio - 1) <= CHECK_BAND if kind == "lose" else _in_band(ratio, new)) else "inconsistent"
+    if combined is None or (math.isfinite(combined) and combined > 0):
+        out["check_combined"] = "consistent" if _in_band(ratio, combined) else "inconsistent"
     return out
 
 
@@ -147,12 +162,17 @@ def _symbol(path: Path, adjusted_dir: Path, reparse: Callable, totals: Counter) 
     for rec in df.to_dict("records"):
         face = None if _null(rec.get("face_value")) else rec["face_value"]
         res = reparse(rec["raw_subject"], face)
-        old, new = _factor(rec.get("adjustment_factor")), (None if res.factor is None else float(res.factor))
+        old = _factor(rec.get("adjustment_factor"))
+        new = None if (res.factor is None or math.isnan(float(res.factor))) else float(res.factor)
         rows.append((rec, old, new, res))
         totals["rows"] += 1
     changes = []
     prices = None
     loaded = False
+    by_day: dict = {}                                                 # ex_date -> product of the NEW factors of all rows that day
+    for rec, _old, new, _res in rows:
+        if new is not None and not pd.isna(rec["ex_date"]):
+            by_day[pd.Timestamp(rec["ex_date"])] = by_day.get(pd.Timestamp(rec["ex_date"]), 1.0) * new
     for i, (rec, old, new, res) in enumerate(rows):
         kind = _kind(old, new)
         if kind is None:
@@ -167,10 +187,12 @@ def _symbol(path: Path, adjusted_dir: Path, reparse: Callable, totals: Counter) 
         ex_date = pd.Timestamp(rec["ex_date"])
         same_day = any(j != i and not pd.isna(ex_date) and pd.Timestamp(o[0]["ex_date"]) == ex_date and (o[1] is not None or o[2] is not None)
                        for j, o in enumerate(rows))
-        ev = _evidence(prices, ex_date, kind, old, new)
+        combined = None if pd.isna(ex_date) else by_day.get(ex_date)
+        ev = _evidence(prices, ex_date, kind, old, new, combined)
         changes.append({"symbol": symbol, "ex_date": None if pd.isna(ex_date) else str(ex_date.date()),
                         "action_type": rec.get("action_type"), "raw_subject": rec["raw_subject"],
-                        "old_factor": old, "new_factor": new, "kind": kind, **ev, "same_day": bool(same_day)})
+                        "old_factor": old, "new_factor": new if _finite(new) else None, "kind": kind,
+                        "combined_factor": combined if _finite(combined) else None, **ev, "same_day": bool(same_day)})
     return changes
 
 
@@ -193,21 +215,26 @@ def _markdown(result: dict) -> str:
     for kind in ("gain", "lose", "change"):
         row = [t["by_kind_check"].get(f"{kind}/{c}", 0) for c in ("consistent", "inconsistent", "no_price")]
         lines.append(f"| {kind} | {row[0]} | {row[1]} | {row[2]} | {sum(row)} |")
+    lines += ["", "## By kind and check_combined (the check against the product of all new factors on the ex-date)", "",
+              "| kind | consistent | inconsistent | no_price | total |", "|---|---|---|---|---|"]
+    for kind in ("gain", "lose", "change"):
+        row = [t["by_kind_check_combined"].get(f"{kind}/{c}", 0) for c in ("consistent", "inconsistent", "no_price")]
+        lines.append(f"| {kind} | {row[0]} | {row[1]} | {row[2]} | {sum(row)} |")
     lines += ["", "## By action type", "", "| action_type | n |", "|---|---|"]
     lines += [f"| {k} | {v} |" for k, v in sorted(t["by_action_type"].items())]
     lines += ["", "## By year of ex-date", "", "| year | n |", "|---|---|"]
     lines += [f"| {k} | {v} |" for k, v in sorted(t["by_year"].items())]
-    order = sorted(ch, key=lambda c: (0 if c["check"] in ("inconsistent", "no_price") else 1 if c["same_day"] else 2,
+    order = sorted(ch, key=lambda c: (0 if c["check_combined"] in ("inconsistent", "no_price") else 1 if c["same_day"] else 2,
                                       c["symbol"], c["ex_date"] or ""))
-    lines += ["", "## Every proposed change (inconsistent and no_price first, then same_day, then the rest)", "",
-              "| symbol | ex_date | type | kind | old | new | check | ratio | prev (date, close) | ex session (date, close) | same_day | subject |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines += ["", "## Every proposed change (check_combined inconsistent or no_price first, then same_day, then the rest)", "",
+              "| symbol | ex_date | type | kind | old | new | combined | check | check_combined | ratio | prev (date, close) | ex session (date, close) | same_day | subject |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     def f(v, nd=6):
         return "" if v is None else f"{v:.{nd}g}"
     for c in order:
         reason = f" ({c['no_price_reason']})" if c["no_price_reason"] else ""
         lines.append(f"| {c['symbol']} | {c['ex_date']} | {c['action_type']} | {c['kind']} | {f(c['old_factor'])} | {f(c['new_factor'])} | "
-                     f"{c['check']}{reason} | {f(c['observed_ratio'])} | {c['prev_date'] or ''} {f(c['prev_close'])} | "
+                     f"{f(c['combined_factor'])} | {c['check']}{reason} | {c['check_combined']} | {f(c['observed_ratio'])} | {c['prev_date'] or ''} {f(c['prev_close'])} | "
                      f"{c['ex_session_date'] or ''} {f(c['ex_close'])} | {'YES' if c['same_day'] else ''} | {str(c['raw_subject']).replace('|', '/')} |")
     return "\n".join(lines) + "\n"
 
@@ -220,12 +247,14 @@ def run(out_dir: Path, actions_dir: Path, adjusted_dir: Path, reparse: Callable 
         changes += _symbol(path, adjusted_dir, reparse, totals)
     changes.sort(key=lambda c: (c["symbol"], c["ex_date"] or ""))
     by_kind_check = Counter(f"{c['kind']}/{c['check']}" for c in changes)
+    by_kind_check_combined = Counter(f"{c['kind']}/{c['check_combined']}" for c in changes)
     result = {
         "history_cutoff": HISTORY_CUTOFF,
         "generated_from_commit": head or _git_head(),
         "totals": {"rows": totals["rows"], "symbols": len(files), "unchanged_factor": totals["unchanged_factor"],
                    "unchanged_factor_other_field_differs": totals["unchanged_factor_other_field_differs"],
                    "proposed": len(changes), "by_kind_check": dict(by_kind_check),
+                   "by_kind_check_combined": dict(by_kind_check_combined),
                    "by_action_type": dict(Counter(str(c["action_type"]) for c in changes)),
                    "by_year": dict(Counter((c["ex_date"] or "none")[:4] for c in changes))},
         "changes": changes,
@@ -250,8 +279,8 @@ def main(argv=None, *, reparse: Callable = default_reparse, actions_dir: Path | 
         logger.error("proposal NOT written")
         return 1
     t = result["totals"]
-    logger.info("scanned {:,} rows in {:,} files: {:,} unchanged factor, {:,} proposed changes {}", t["rows"], t["symbols"],
-                t["unchanged_factor"], t["proposed"], t["by_kind_check"])
+    logger.info("scanned {:,} rows in {:,} files: {:,} unchanged factor, {:,} proposed changes; check {}; check_combined {}",
+                t["rows"], t["symbols"], t["unchanged_factor"], t["proposed"], t["by_kind_check"], t["by_kind_check_combined"])
     logger.info("written: {}", out_dir)
     return 0
 

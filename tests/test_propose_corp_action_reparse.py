@@ -321,3 +321,121 @@ def test_module_never_writes_under_data_or_calls_the_network():
     src = Path(prp.__file__).read_text(encoding="utf-8")
     for banned in ("requests", "urllib", "to_parquet", ".unlink(", "os.remove", "shutil"):
         assert banned not in src
+
+
+# --------------------------------------------------------------------------------------------------- Round 1 (1): non-finite closes
+def _strict_json(world):
+    return json.loads((world.out / "proposed_changes.json").read_text(encoding="utf-8"), parse_constant=lambda c: pytest.fail(c))
+
+
+@pytest.mark.parametrize("closes", [
+    [("2026-03-09", float("nan")), ("2026-03-10", 100)],
+    [("2026-03-09", 1000), ("2026-03-10", float("nan"))],
+    [("2026-03-09", 1000), ("2026-03-10", float("inf"))],
+    [("2026-03-09", float("inf")), ("2026-03-10", 100)],
+    [("2026-03-09", 0.0), ("2026-03-10", 100)],
+])
+def test_R1_a_non_finite_or_zero_close_is_no_price_bad_close_and_the_run_completes(world, closes):
+    world.add("AAA", [one(world)], closes)
+    assert world.run(FakeParser({"split x": 0.1})) == 0
+    (c,) = _strict_json(world)["changes"]
+    assert c["check"] == "no_price" and c["no_price_reason"] == "bad_close"
+    assert c["observed_ratio"] is None and c["check_combined"] == "no_price"
+    for k in ("prev_close", "ex_close"):                                   # null where not finite, a number otherwise
+        assert c[k] is None or np.isfinite(c[k])
+
+
+def test_R1_the_finite_close_of_a_bad_pair_is_still_written(world):
+    world.add("AAA", [one(world)], [("2026-03-09", 1000), ("2026-03-10", float("inf"))])
+    world.run(FakeParser({"split x": 0.1}))
+    (c,) = world.changes()
+    assert c["prev_close"] == 1000.0 and c["ex_close"] is None
+
+
+# --------------------------------------------------------------------------------------------------- Round 1 (2): bad factors
+@pytest.mark.parametrize("bad", [0.0, -0.5, float("inf"), float("nan")])
+def test_R1_a_zero_negative_or_non_finite_new_factor_is_no_price_bad_factor(world, bad):
+    world.add("AAA", [one(world)], GOOD)
+    assert world.run(FakeParser({"split x": bad})) == 0
+    cs = _strict_json(world)["changes"]
+    if bad != bad:                       # a NaN factor from a parser is treated as no factor at all: nothing to propose
+        assert cs == []
+        return
+    (c,) = cs
+    assert c["check"] == "no_price" and c["no_price_reason"] == "bad_factor" and c["observed_ratio"] is None
+    assert c["check_combined"] == "no_price"
+
+
+# --------------------------------------------------------------------------------------------------- Round 1 (3): combined same-day factor
+def test_R1_split_with_a_same_day_bonus_gain_is_consistent_when_combined(world):
+    world.add("AAA", [one(world, raw_subject="split x"), one(world, raw_subject="bonus y", action_type="bonus")],
+              [("2026-03-09", 1000), ("2026-03-10", 104)])
+    world.run(FakeParser({"split x": 0.2, "bonus y": 0.5}))                 # the bonus is itself a gain (stored without a factor)
+    by = {c["raw_subject"]: c for c in world.changes()}
+    s = by["split x"]
+    assert s["check"] == "inconsistent"                                       # `check` is exactly what it was
+    assert s["combined_factor"] == pytest.approx(0.1) and s["check_combined"] == "consistent"
+    b = by["bonus y"]
+    assert b["combined_factor"] == pytest.approx(0.1) and b["check_combined"] == "consistent"
+
+
+def test_R1_the_combined_factor_uses_the_new_factor_of_an_unchanged_same_day_row(world):
+    world.add("AAA", [one(world, raw_subject="split x"), one(world, raw_subject="bonus y", action_type="bonus", factor=0.5)],
+              [("2026-03-09", 1000), ("2026-03-10", 104)])
+    world.run(FakeParser({"split x": 0.2, "bonus y": 0.5}))
+    (c,) = world.changes()                                                    # only the split is a proposed change
+    assert c["combined_factor"] == pytest.approx(0.1) and c["check_combined"] == "consistent"
+
+
+def test_R1_a_lone_split_has_combined_equal_to_its_factor_and_the_same_check(world):
+    world.add("AAA", [one(world)], GOOD)
+    world.run(FakeParser({"split x": 0.1}))
+    (c,) = world.changes()
+    assert c["combined_factor"] == c["new_factor"] == 0.1 and c["check_combined"] == c["check"] == "consistent"
+
+
+def test_R1_a_lone_split_that_is_inconsistent_stays_inconsistent_combined(world):
+    world.add("AAA", [one(world)], [("2026-03-09", 1000), ("2026-03-10", 990)])
+    world.run(FakeParser({"split x": 0.1}))
+    (c,) = world.changes()
+    assert c["check"] == c["check_combined"] == "inconsistent"
+
+
+def test_R1_a_lose_row_with_nothing_else_on_the_day_has_a_null_combined_factor_compared_with_one(world):
+    world.add("AAA", [one(world, raw_subject="bonus x", action_type="bonus", factor=0.5)], [("2026-03-09", 100), ("2026-03-10", 99)])
+    world.run(FakeParser({"bonus x": None}))
+    (c,) = world.changes()
+    assert c["kind"] == "lose" and c["combined_factor"] is None and c["check_combined"] == "consistent"
+
+
+def test_R1_a_lose_row_beside_a_same_day_factor_uses_that_factor(world):
+    world.add("AAA", [one(world, raw_subject="bonus x", action_type="bonus", factor=0.5), one(world, raw_subject="split y")],
+              [("2026-03-09", 1000), ("2026-03-10", 101)])
+    world.run(FakeParser({"bonus x": None, "split y": 0.1}))
+    by = {c["raw_subject"]: c for c in world.changes()}
+    assert by["bonus x"]["combined_factor"] == pytest.approx(0.1) and by["bonus x"]["check_combined"] == "consistent"
+    assert by["bonus x"]["check"] == "inconsistent"                          # alone it would be compared with 1
+
+
+def test_R1_rows_on_other_days_do_not_enter_the_combined_factor(world):
+    world.add("AAA", [one(world, raw_subject="split x"), one(world, ex_date="2026-03-02", raw_subject="bonus y", action_type="bonus", factor=0.5)],
+              GOOD)
+    world.run(FakeParser({"split x": 0.1, "bonus y": 0.5}))
+    (c,) = world.changes()
+    assert c["combined_factor"] == 0.1 and c["same_day"] is False
+
+
+def test_R1_the_markdown_has_the_new_columns_a_second_totals_table_and_sorts_by_combined(world):
+    world.add("AAA", [one(world, raw_subject="ok")], GOOD)
+    world.add("ZZZ", [one(world, raw_subject="bad")], [("2026-03-09", 1000), ("2026-03-10", 990)])
+    world.add("AAB", [one(world, raw_subject="split c"), one(world, raw_subject="bonus c", action_type="bonus")],
+              [("2026-03-09", 1000), ("2026-03-10", 104)])
+    world.run(FakeParser({"ok": 0.1, "bad": 0.1, "split c": 0.2, "bonus c": 0.5}))
+    md = (world.out / "proposed_changes.md").read_text(encoding="utf-8")
+    assert "combined" in md and "check_combined" in md
+    assert "By kind and check_combined" in md and "By kind and check" in md
+    # AAB is `check` inconsistent but combined consistent: it must NOT sort ahead of the genuinely inconsistent ZZZ (alphabetically later)
+    assert md.index("ZZZ") < md.index("AAB") and md.index("AAB") < md.index("AAA")
+    totals = world.result()["totals"]
+    assert totals["by_kind_check_combined"]["gain/consistent"] == 3 and totals["by_kind_check_combined"]["gain/inconsistent"] == 1
+    assert totals["by_kind_check"]["gain/inconsistent"] == 3                       # `check` is unchanged
